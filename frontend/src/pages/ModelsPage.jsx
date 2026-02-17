@@ -14,7 +14,7 @@ function ModelsPage() {
 
     // Manual model add dialog
     const [showAddDialog, setShowAddDialog] = useState(false)
-    const [newModel, setNewModel] = useState({ name: '', description: '', tags: '' })
+    const [newModel, setNewModel] = useState({ name: '', description: '', tags: '', model_path: '' })
 
     // Test panel
     const [testModelId, setTestModelId] = useState(null)
@@ -71,6 +71,7 @@ function ModelsPage() {
 
     const addManualModel = async () => {
         if (!newModel.name.trim()) { setError('Model adı gerekli'); return }
+        if (!newModel.model_path.trim()) { setError('Model dosya yolu gerekli'); return }
         try {
             const response = await fetch(`${API_BASE_URL}/api/models`, {
                 method: 'POST',
@@ -79,13 +80,14 @@ function ModelsPage() {
                     name: newModel.name.trim(),
                     description: newModel.description.trim(),
                     tags: newModel.tags.split(',').map(t => t.trim()).filter(Boolean),
+                    model_path: newModel.model_path.trim(),
                     status: 'completed'
                 })
             })
             if (response.ok) {
                 setSuccess('✅ Model eklendi')
                 setShowAddDialog(false)
-                setNewModel({ name: '', description: '', tags: '' })
+                setNewModel({ name: '', description: '', tags: '', model_path: '' })
                 loadModels()
             }
         } catch (err) {
@@ -338,7 +340,7 @@ function ModelsPage() {
                                 <h3>{model.name}</h3>
                                 <span className={getStatusClass(model.status)}>
                                     {getStatusIcon(model.status)}
-                                    {model.status === 'completed' ? 'Tamamlandı' : model.status === 'training' ? 'Eğitimde' : model.status === 'failed' ? 'Başarısız' : 'Bekliyor'}
+                                    {model.status === 'completed' ? 'Tamamlandı' : model.status === 'training' ? 'Eğitimde' : model.status === 'failed' ? 'Başarısız' : model.status === 'cancelled' ? 'İptal Edildi' : 'Bekliyor'}
                                 </span>
                             </div>
 
@@ -423,6 +425,16 @@ function ModelsPage() {
                                     placeholder="Modelin amacı ve detayları..."
                                     rows={3}
                                 />
+                            </div>
+                            <div className="form-group">
+                                <label>Model Dosya Yolu *</label>
+                                <input
+                                    type="text"
+                                    value={newModel.model_path}
+                                    onChange={e => setNewModel({ ...newModel, model_path: e.target.value })}
+                                    placeholder="Örn: C:\models\my_model\model.pth"
+                                />
+                                <span className="text-muted" style={{ fontSize: '0.75rem' }}>Model .pth dosyasının tam yolu</span>
                             </div>
                             <div className="form-group">
                                 <label>Etiketler (virgülle ayırın)</label>

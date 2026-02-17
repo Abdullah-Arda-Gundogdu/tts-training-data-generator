@@ -969,7 +969,8 @@ def api_create_model():
             base_model=data.get('base_model', 'xtts_v2'),
             training_params=data.get('training_params', {}),
             dataset_csv=data.get('dataset_csv'),
-            status=data.get('status', 'completed')
+            status=data.get('status', 'completed'),
+            model_path=data.get('model_path')
         )
         return jsonify({"success": True, "model_id": model_id}), 201
     except Exception as e:

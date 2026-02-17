@@ -68,14 +68,15 @@ def add_model(
     base_model: str = "xtts_v2",
     training_params: dict = None,
     dataset_csv: str = None,
-    status: str = "pending"
+    status: str = "pending",
+    model_path: str = None
 ) -> int:
     """Add a new model entry. Returns model ID."""
     with _db_lock:
         with get_connection() as conn:
             cursor = conn.execute(
-                """INSERT INTO models (name, description, tags, base_model, training_params, dataset_csv, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO models (name, description, tags, base_model, training_params, dataset_csv, status, model_path)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     name,
                     description,
@@ -83,7 +84,8 @@ def add_model(
                     base_model,
                     json.dumps(training_params or {}),
                     dataset_csv,
-                    status
+                    status,
+                    model_path
                 )
             )
             return cursor.lastrowid

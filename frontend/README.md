@@ -1,16 +1,58 @@
-# React + Vite
+# Frontend — React + Vite
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React single-page application for the TTS Training Data Generator. Communicates with the Flask backend via REST API.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+```bash
+npm install
+```
 
-## React Compiler
+## Running
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+npm run dev
+# Runs on http://localhost:5173
+```
 
-## Expanding the ESLint configuration
+The frontend expects the backend to be running on the same hostname, port `5001`. This is auto-detected via `window.location.hostname`.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Pages
+
+| Page | File | Description |
+|------|------|-------------|
+| **TTS Client** | `App.jsx` | Main data generator — sentence generation, review, audio synthesis, folder management |
+| **Training** | `pages/TrainingPage.jsx` | XTTS v2 fine-tuning — folder selection, hyperparameters, live training console |
+| **Models** | `pages/ModelsPage.jsx` | Model registry — browse trained models, run inference, test and compare |
+| **Settings** | `pages/SettingsPage.jsx` | API keys, LLM provider config, voice parameters |
+
+## Project Structure
+
+```
+src/
+├── main.jsx          # Entry point (React Router)
+├── App.jsx           # Main app shell & TTS client page
+├── App.css           # Global styles (dark theme, components)
+├── index.css         # CSS reset & base styles
+├── pages/
+│   ├── TrainingPage.jsx
+│   ├── ModelsPage.jsx
+│   └── SettingsPage.jsx
+└── assets/
+```
+
+## Tech Stack
+
+- **React 19** with functional components and hooks
+- **Vite 7** for bundling and HMR
+- **React Router 7** for client-side navigation
+- **Lucide React** for icons
+- Vanilla CSS with CSS custom properties (dark theme)
+
+## Build
+
+```bash
+npm run build        # Production build → dist/
+npm run preview      # Preview production build
+npm run lint         # ESLint check
+```

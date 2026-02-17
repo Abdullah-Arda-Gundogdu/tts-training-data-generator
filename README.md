@@ -173,7 +173,7 @@ These can be downloaded from the [Coqui XTTS v2 model page](https://huggingface.
 ```bash
 # Terminal 1: Backend
 cd backend
-python app.py          # Runs on http://localhost:5000
+python app.py          # Runs on http://localhost:5001
 
 # Terminal 2: Frontend
 cd frontend
