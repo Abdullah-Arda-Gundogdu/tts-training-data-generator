@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom'
-import { Wand2, Volume2, RefreshCw, Check, AlertCircle, Plus, Download, Settings, Folder, FolderArchive, Trash2, Cpu, AlertTriangle, X, Brain, GraduationCap, Key } from 'lucide-react'
+import { Wand2, Volume2, RefreshCw, Check, AlertCircle, Plus, Download, Settings, Folder, FolderArchive, Trash2, Cpu, AlertTriangle, X, Brain, GraduationCap, Key, Sparkles } from 'lucide-react'
 import ModelsPage from './pages/ModelsPage'
 import TrainingPage from './pages/TrainingPage'
 import SettingsPage from './pages/SettingsPage'
@@ -39,6 +39,10 @@ function App() {
   const [pitch, setPitch] = useState(0.0)
   const [volumeGainDb, setVolumeGainDb] = useState(0.0)
 
+  // TTS Provider settings
+  const [ttsProvider, setTtsProvider] = useState('google_cloud')
+  const [geminiAvailable, setGeminiAvailable] = useState(false)
+
   // Loading states
   const [isGeneratingSentences, setIsGeneratingSentences] = useState(false)
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false)
@@ -56,6 +60,7 @@ function App() {
 
   // Audio ref
   const audioRef = useRef(null)
+  const location = useLocation()
 
   // Load stats on mount
   useEffect(() => {
@@ -64,16 +69,18 @@ function App() {
     loadVoices()
     loadFolders()
     loadLLMConfig()
-    loadItems()
-    loadVoices()
-    loadFolders()
-    loadLLMConfig()
+    loadTTSConfig()
     loadErrorReports()
 
     // Poll for errors every 10 seconds
     const interval = setInterval(loadErrorReports, 10000)
     return () => clearInterval(interval)
   }, [])
+
+  // Reload TTS config when navigating back (e.g. from Settings page after saving API key)
+  useEffect(() => {
+    loadTTSConfig()
+  }, [location.pathname])
 
   // Clear messages after 5 seconds
   useEffect(() => {
@@ -120,10 +127,14 @@ function App() {
       const data = await response.json()
       if (data.success) {
         setVoices(data.voices)
-        // Set default if current selection not in list
-        if (!Object.keys(data.voices).includes(voice)) {
-          setVoice(Object.keys(data.voices)[0])
-        }
+        const voiceKeys = Object.keys(data.voices)
+        // Always reset voice selection when the voice list changes provider
+        setVoice(prev => {
+          if (voiceKeys.length > 0 && !voiceKeys.includes(prev)) {
+            return voiceKeys[0]
+          }
+          return prev
+        })
       }
     } catch (err) {
       console.error('Sesler yüklenemedi:', err)
@@ -231,6 +242,39 @@ function App() {
       }
     } catch (err) {
       setError('LLM provider değiştirilemedi: ' + err.message)
+    }
+  }
+
+  const loadTTSConfig = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tts/config`)
+      const data = await response.json()
+      if (data.success) {
+        setTtsProvider(data.provider)
+        setGeminiAvailable(data.gemini_available)
+      }
+    } catch (err) {
+      console.error('TTS config yüklenemedi:', err)
+    }
+  }
+
+  const switchTTSProvider = async (provider) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/tts/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider })
+      })
+      const data = await response.json()
+      if (data.success) {
+        setTtsProvider(provider)
+        setSuccess(`✅ TTS provider: ${provider === 'gemini' ? 'Gemini 2.5 Flash' : 'Google Cloud TTS'}`)
+        // Reload voices and TTS config (refreshes geminiAvailable)
+        loadVoices()
+        loadTTSConfig()
+      }
+    } catch (err) {
+      setError('TTS provider değiştirilemedi: ' + err.message)
     }
   }
 
@@ -993,7 +1037,35 @@ function App() {
                     <div className="tts-settings-panel">
                       <div className="settings-header">
                         <h3><Settings size={16} /> TTS Ayarları</h3>
+                        <span style={{ fontSize: '0.7rem', color: ttsProvider === 'gemini' ? '#a78bfa' : '#60a5fa', background: ttsProvider === 'gemini' ? 'rgba(167,139,250,0.1)' : 'rgba(96,165,250,0.1)', padding: '2px 8px', borderRadius: '8px' }}>
+                          {ttsProvider === 'gemini' ? '✨ Gemini' : '☁️ Google Cloud'}
+                        </span>
                       </div>
+
+                      {/* TTS Provider Toggle */}
+                      <div style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
+                        <button
+                          onClick={() => switchTTSProvider('google_cloud')}
+                          className={`btn btn-small ${ttsProvider === 'google_cloud' ? 'btn-primary' : 'btn-ghost'}`}
+                          style={{ flex: 1, fontSize: '0.75rem', padding: '6px 8px' }}
+                        >
+                          ☁️ Google Cloud
+                        </button>
+                        <button
+                          onClick={() => switchTTSProvider('gemini')}
+                          className={`btn btn-small ${ttsProvider === 'gemini' ? 'btn-primary' : 'btn-ghost'}`}
+                          style={{ flex: 1, fontSize: '0.75rem', padding: '6px 8px' }}
+                          title={!geminiAvailable ? 'Gemini API Key gerekli — Ayarlar sayfasından ekleyin' : ''}
+                        >
+                          <Sparkles size={12} /> Gemini 2.5
+                        </button>
+                      </div>
+
+                      {ttsProvider === 'gemini' && !geminiAvailable && (
+                        <div style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '8px', padding: '8px 10px', marginBottom: '10px', fontSize: '0.75rem', color: '#fbbf24' }}>
+                          ⚠️ Gemini API Key ayarlanmamış. <strong>Ayarlar</strong> sayfasından ekleyin.
+                        </div>
+                      )}
 
                       <div className="settings-grid">
                         <div className="setting-item">
@@ -1018,31 +1090,35 @@ function App() {
                           />
                         </div>
 
-                        <div className="setting-item">
-                          <label>Pitch: {pitch}</label>
-                          <input
-                            type="range"
-                            min="-20"
-                            max="20"
-                            step="1"
-                            value={pitch}
-                            onChange={(e) => setPitch(parseFloat(e.target.value))}
-                            className="range-input"
-                          />
-                        </div>
+                        {ttsProvider === 'google_cloud' && (
+                          <>
+                            <div className="setting-item">
+                              <label>Pitch: {pitch}</label>
+                              <input
+                                type="range"
+                                min="-20"
+                                max="20"
+                                step="1"
+                                value={pitch}
+                                onChange={(e) => setPitch(parseFloat(e.target.value))}
+                                className="range-input"
+                              />
+                            </div>
 
-                        <div className="setting-item">
-                          <label>Volume: {volumeGainDb} dB</label>
-                          <input
-                            type="range"
-                            min="-10"
-                            max="10.0"
-                            step="1"
-                            value={volumeGainDb}
-                            onChange={(e) => setVolumeGainDb(parseFloat(e.target.value))}
-                            className="range-input"
-                          />
-                        </div>
+                            <div className="setting-item">
+                              <label>Volume: {volumeGainDb} dB</label>
+                              <input
+                                type="range"
+                                min="-10"
+                                max="10.0"
+                                step="1"
+                                value={volumeGainDb}
+                                onChange={(e) => setVolumeGainDb(parseFloat(e.target.value))}
+                                className="range-input"
+                              />
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
 

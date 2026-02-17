@@ -24,7 +24,7 @@ The frontend expects the backend to be running on the same hostname, port `5001`
 | **TTS Client** | `App.jsx` | Main data generator — sentence generation, review, audio synthesis, folder management |
 | **Training** | `pages/TrainingPage.jsx` | XTTS v2 fine-tuning — folder selection, hyperparameters, live training console |
 | **Models** | `pages/ModelsPage.jsx` | Model registry — browse trained models, run inference, test and compare |
-| **Settings** | `pages/SettingsPage.jsx` | API keys, LLM provider config, voice parameters |
+| **Settings** | `pages/SettingsPage.jsx` | API keys, LLM provider, TTS provider (Google Cloud / Gemini), voice parameters |
 
 ## Project Structure
 

@@ -4,7 +4,7 @@
 
 **An end-to-end web application for generating, managing, and training Text-to-Speech models.**
 
-Generate natural sentences with AI · Synthesize audio with Google TTS · Fine-tune XTTS v2 models — all from a single UI.
+Generate natural sentences with AI · Synthesize audio with Google TTS or Gemini 2.5 Flash · Fine-tune XTTS v2 models — all from a single UI.
 
 ![Python](https://img.shields.io/badge/Python-3.8+-3776AB?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3.0-000000?logo=flask)
@@ -24,7 +24,7 @@ Generate natural sentences with AI · Synthesize audio with Google TTS · Fine-t
 - Built-in **duplicate detection** prevents redundant data.
 
 ### 🔊 Audio Synthesis
-- **Google Cloud TTS** integration with WaveNet & Neural2 voices.
+- **Dual TTS provider support** — switch between **Google Cloud TTS** (WaveNet / Neural2) and **Gemini 2.5 Flash TTS** (natural, expressive voices).
 - Automatic alignment of audio files with transcript metadata.
 - Outputs ready-to-use `metadata.csv` in **XTTS format**.
 
@@ -37,7 +37,7 @@ Generate natural sentences with AI · Synthesize audio with Google TTS · Fine-t
 ### 🗂️ Data & Model Management
 - **Folder browser** — organize, preview, delete, and download output folders as ZIP.
 - **Model registry** — list trained models, run inference, and compare results.
-- **Settings page** — switch LLM providers, configure API keys, and adjust voice parameters.
+- **Settings page** — switch LLM / TTS providers, configure API keys, and adjust voice parameters.
 
 ### 🌐 Network & UX
 - Local-network accessible — serve to other devices on your LAN.
@@ -70,7 +70,7 @@ Generate natural sentences with AI · Synthesize audio with Google TTS · Fine-t
 │         │                │                │          │
 │  ┌──────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐  │
 │  │ Google TTS  │  │ Coqui TTS   │  │ Model       │  │
-│  │ Service     │  │ (XTTS v2)   │  │ Registry    │  │
+│  │ / Gemini TTS│  │ (XTTS v2)   │  │ Registry    │  │
 │  └─────────────┘  └─────────────┘  └─────────────┘  │
 │                                                     │
 │              SQLite · training_data.db               │
@@ -85,7 +85,8 @@ Generate natural sentences with AI · Synthesize audio with Google TTS · Fine-t
 |---|---|---|
 | **Python** | 3.8+ | Backend runtime |
 | **Node.js** | 18+ | Frontend tooling |
-| **Google Cloud Account** | — | Cloud TTS API enabled + service-account JSON |
+| **Google Cloud Account** | — | Cloud TTS API enabled + service-account JSON *(for Google Cloud TTS)* |
+| **Gemini API Key** *(optional)* | — | From [Google AI Studio](https://aistudio.google.com) *(for Gemini TTS)* |
 | **NVIDIA GPU** | CUDA capable | Required for XTTS training, optional for inference |
 | **Ollama** *(optional)* | latest | Only if using local LLMs instead of OpenAI |
 
@@ -140,11 +141,19 @@ OPENAI_API_KEY=sk-your-openai-api-key
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.1:8b
 
-# Google Cloud TTS credentials (required)
+# TTS Provider: "google_cloud" or "gemini"
+TTS_PROVIDER=google_cloud
+
+# Google Cloud TTS credentials (required if TTS_PROVIDER=google_cloud)
 GOOGLE_APPLICATION_CREDENTIALS=google_credentials.json
+
+# Gemini API Key (required if TTS_PROVIDER=gemini)
+# Get from: https://aistudio.google.com
+GEMINI_API_KEY=your-gemini-api-key-here
 ```
 
 > **Note:** Place your Google Cloud service-account JSON file at `backend/google_credentials.json`.
+> For Gemini TTS, get an API key from [Google AI Studio](https://aistudio.google.com).
 
 ### 5. Download XTTS Base Files *(for training)*
 
@@ -196,7 +205,7 @@ npm run dev            # Runs on http://localhost:5173
 
 1. **Generate Sentences** — Enter a target word and count. The AI generates diverse sentences containing that word.
 2. **Review & Edit** — Inspect, edit, or delete any sentence before proceeding.
-3. **Synthesize Audio** — Click *Generate Audio* to produce WAV files via Google TTS.
+3. **Synthesize Audio** — Click *Generate Audio* to produce WAV files via Google Cloud TTS or Gemini 2.5 Flash TTS.
 4. **Manage & Export** — Browse output folders, download as ZIP, or delete unwanted sets.
 5. **Train & Infer** — Launch XTTS fine-tuning from the Training page, then test your model on the Models page.
 
@@ -210,6 +219,7 @@ tts-training-data-generator/
 │   ├── app.py                  # Flask API (main entry point)
 │   ├── llm_service.py          # OpenAI / Ollama sentence generation
 │   ├── google_tts_service.py   # Google Cloud TTS wrapper
+│   ├── gemini_tts_service.py   # Gemini 2.5 Flash TTS wrapper
 │   ├── training_service.py     # Training job orchestration
 │   ├── xtts_trainer.py         # Coqui XTTS v2 training logic
 │   ├── inference_service.py    # Model inference (TTS synthesis)

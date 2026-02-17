@@ -70,7 +70,7 @@ function SettingsPage() {
 
     const isSecret = (keyName) => keyName.includes('KEY') || keyName.includes('SECRET')
 
-    const keyOrder = ['OPENAI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'OLLAMA_BASE_URL', 'LLM_PROVIDER']
+    const keyOrder = ['OPENAI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_API_KEY', 'OLLAMA_BASE_URL', 'LLM_PROVIDER', 'TTS_PROVIDER']
 
     return (
         <div className="page-content">
@@ -125,7 +125,9 @@ function SettingsPage() {
                                                 type={secret && !showSecrets[keyName] ? 'password' : 'text'}
                                                 value={currentValue}
                                                 onChange={e => handleEdit(keyName, e.target.value)}
+                                                onKeyDown={e => { if (e.key === 'Enter') saveKeys() }}
                                                 placeholder={`Yeni ${keyInfo.label} girin...`}
+                                                autoFocus
                                             />
                                         ) : (
                                             <div className="key-current-value">
@@ -156,13 +158,19 @@ function SettingsPage() {
                                     <p className="key-hint">OpenAI GPT API anahtarınız. Cümle üretimi için kullanılır.</p>
                                 )}
                                 {keyName === 'GOOGLE_APPLICATION_CREDENTIALS' && (
-                                    <p className="key-hint">Google Cloud servis hesap JSON dosyasının yolu. TTS için kullanılır.</p>
+                                    <p className="key-hint">Google Cloud servis hesap JSON dosyasının yolu. Google Cloud TTS için kullanılır.</p>
+                                )}
+                                {keyName === 'GEMINI_API_KEY' && (
+                                    <p className="key-hint">Gemini 2.5 Flash TTS ile ses üretimi için gereklidir. <a href="https://aistudio.google.com" target="_blank" rel="noreferrer">Anahtar al →</a></p>
                                 )}
                                 {keyName === 'OLLAMA_BASE_URL' && (
                                     <p className="key-hint">Ollama API sunucu adresi. Varsayılan: http://localhost:11434</p>
                                 )}
                                 {keyName === 'LLM_PROVIDER' && (
                                     <p className="key-hint">Cümle üretimi için kullanılacak LLM sağlayıcı: "openai" veya "ollama".</p>
+                                )}
+                                {keyName === 'TTS_PROVIDER' && (
+                                    <p className="key-hint">Ses üretimi için kullanılacak TTS sağlayıcı: "google_cloud" veya "gemini".</p>
                                 )}
                             </div>
                         )
@@ -189,7 +197,10 @@ function SettingsPage() {
                         <strong>OpenAI API Key</strong> — GPT ile cümle üretimi için gereklidir. <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">Anahtar al →</a>
                     </div>
                     <div className="info-item">
-                        <strong>Google Cloud Credentials</strong> — Google TTS ile ses dosyası oluşturma için gereklidir. JSON formatında bir servis hesap dosyası kullanılır.
+                        <strong>Google Cloud Credentials</strong> — Google Cloud TTS ile ses dosyası oluşturma için gereklidir. JSON formatında bir servis hesap dosyası kullanılır.
+                    </div>
+                    <div className="info-item">
+                        <strong>Gemini API Key</strong> — Gemini 2.5 Flash TTS ile doğal ses üretimi için gereklidir. <a href="https://aistudio.google.com" target="_blank" rel="noreferrer">Google AI Studio →</a>
                     </div>
                     <div className="info-item">
                         <strong>Ollama</strong> — Yerel LLM kullanmak istiyorsanız Ollama sunucusu çalışıyor olmalıdır. <a href="https://ollama.ai" target="_blank" rel="noreferrer">Ollama →</a>

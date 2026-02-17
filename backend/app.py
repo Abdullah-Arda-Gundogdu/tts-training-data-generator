@@ -3,7 +3,7 @@ Training Data Generator - Standalone Backend
 
 Flask API for generating synthetic training data:
 1. GPT generates sentences containing mispronounced words
-2. Google TTS converts sentences to .wav files
+2. Google TTS or Gemini TTS converts sentences to .wav files
 3. Export as metadata.csv for XTTS training
 """
 
@@ -14,6 +14,10 @@ import shutil
 import zipfile
 import io
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Import services
 from llm_service import (
@@ -23,12 +27,9 @@ from llm_service import (
     set_provider as set_llm_provider,
     get_ollama_models
 )
-from google_tts_service import (
-    synthesize_speech,
-    get_available_voices,
-    generate_training_filename,
-    DEFAULT_OUTPUT_DIR
-)
+import google_tts_service
+import gemini_tts_service
+from google_tts_service import DEFAULT_OUTPUT_DIR
 from training_database import (
     add_training_item,
     update_training_item,
@@ -59,6 +60,35 @@ CORS(app)
 # Output directory
 TRAINING_OUTPUT_DIR = "training_output"
 os.makedirs(TRAINING_OUTPUT_DIR, exist_ok=True)
+
+# ============================================================================
+# TTS PROVIDER MANAGEMENT
+# ============================================================================
+
+# Current TTS provider: "google_cloud" or "gemini"
+_tts_provider = os.getenv("TTS_PROVIDER", "google_cloud")
+
+def get_tts_provider():
+    """Get current TTS provider name."""
+    return _tts_provider
+
+def set_tts_provider(provider: str):
+    """Set the active TTS provider."""
+    global _tts_provider
+    if provider not in ("google_cloud", "gemini"):
+        raise ValueError(f"Invalid TTS provider: {provider}. Must be 'google_cloud' or 'gemini'.")
+    _tts_provider = provider
+    # Reset Gemini client if switching away (so new API key takes effect next time)
+    if provider != "gemini":
+        gemini_tts_service.reset_client()
+    print(f"🔊 TTS provider set to: {provider}")
+    return provider
+
+def get_active_tts_service():
+    """Get the active TTS service module."""
+    if _tts_provider == "gemini":
+        return gemini_tts_service
+    return google_tts_service
 
 
 @app.route('/api/health', methods=['GET'])
@@ -150,7 +180,7 @@ def api_regenerate_sentence():
 
 @app.route('/api/generate-audio', methods=['POST'])
 def api_generate_audio():
-    """Generate .wav files from sentences using Google TTS."""
+    """Generate .wav files from sentences using the active TTS provider."""
     try:
         data = request.get_json()
         
@@ -161,7 +191,11 @@ def api_generate_audio():
         if not isinstance(sentences, list) or len(sentences) == 0:
             return jsonify({"error": "sentences must be a non-empty array"}), 400
         
-        voice = data.get('voice', 'tr-TR-Wavenet-D')
+        # Get the active TTS service
+        tts_service = get_active_tts_service()
+        provider = get_tts_provider()
+        
+        voice = data.get('voice', 'tr-TR-Wavenet-D' if provider == 'google_cloud' else 'Kore')
         speaking_rate = float(data.get('speakingRate', 1.0))
         pitch = float(data.get('pitch', 0.0))
         volume_gain_db = float(data.get('volumeGainDb', 0.0))
@@ -198,9 +232,9 @@ def api_generate_audio():
             # Create word-based subfolder
             word_folder = os.path.join(TRAINING_OUTPUT_DIR, word.lower()) if word else TRAINING_OUTPUT_DIR
             os.makedirs(word_folder, exist_ok=True)
-            output_path = generate_training_filename(text, word_folder)
+            output_path = tts_service.generate_training_filename(text, word_folder)
             
-            result = synthesize_speech(
+            result = tts_service.synthesize_speech(
                 text=text,
                 output_path=output_path,
                 voice_name=voice,
@@ -222,6 +256,15 @@ def api_generate_audio():
                 result["play_url"] = f"/api/audio/{item_id}/play"
             
             results.append(result)
+            
+            # Rate limit delay for Gemini free tier (3 req/min)
+            if provider == 'gemini' and result.get("success"):
+                import time
+                remaining = len(sentences) - len(results)
+                if remaining > 0:
+                    delay = getattr(gemini_tts_service, 'RATE_LIMIT_DELAY', 22)
+                    print(f"⏳ [Gemini] Rate limit: waiting {delay}s ({remaining} remaining)...")
+                    time.sleep(delay)
         
         successful = sum(1 for r in results if r.get("success"))
         
@@ -464,11 +507,59 @@ def api_get_stats():
 
 @app.route('/api/voices', methods=['GET'])
 def api_get_voices():
-    """Get available Google TTS voices."""
+    """Get available TTS voices for the active provider."""
+    tts_service = get_active_tts_service()
     return jsonify({
         "success": True,
-        "voices": get_available_voices()
+        "voices": tts_service.get_available_voices(),
+        "provider": get_tts_provider()
     })
+
+
+@app.route('/api/tts/config', methods=['GET'])
+def api_get_tts_config():
+    """Get current TTS provider configuration."""
+    provider = get_tts_provider()
+    gemini_available = bool(os.getenv("GEMINI_API_KEY", "")) and os.getenv("GEMINI_API_KEY", "") != "your-gemini-api-key-here"
+    return jsonify({
+        "success": True,
+        "provider": provider,
+        "providers": ["google_cloud", "gemini"],
+        "gemini_available": gemini_available
+    })
+
+
+@app.route('/api/tts/config', methods=['POST'])
+def api_set_tts_config():
+    """Set TTS provider."""
+    try:
+        data = request.get_json() or {}
+        provider = data.get('provider')
+        
+        if not provider:
+            return jsonify({"error": "provider field is required"}), 400
+        
+        set_tts_provider(provider)
+        
+        # Persist to .env
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+        from dotenv import dotenv_values
+        existing = dotenv_values(env_path) if os.path.exists(env_path) else {}
+        existing['TTS_PROVIDER'] = provider
+        with open(env_path, 'w', encoding='utf-8') as f:
+            f.write("# Environment variables for Training Data Generator\n")
+            f.write("# Updated via Settings UI\n\n")
+            for key, value in existing.items():
+                f.write(f"{key}={value}\n")
+        
+        return jsonify({
+            "success": True,
+            "provider": provider
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/llm/config', methods=['GET'])
@@ -1191,6 +1282,11 @@ def api_get_keys():
                 "is_set": bool(env_vars.get("GOOGLE_APPLICATION_CREDENTIALS")),
                 "label": "Google Cloud Credentials Path"
             },
+            "GEMINI_API_KEY": {
+                "value": mask_key(env_vars.get("GEMINI_API_KEY", "")),
+                "is_set": bool(env_vars.get("GEMINI_API_KEY")) and env_vars.get("GEMINI_API_KEY") != "your-gemini-api-key-here",
+                "label": "Gemini API Key"
+            },
             "OLLAMA_BASE_URL": {
                 "value": env_vars.get("OLLAMA_BASE_URL", "http://localhost:11434"),
                 "is_set": bool(env_vars.get("OLLAMA_BASE_URL")),
@@ -1200,6 +1296,11 @@ def api_get_keys():
                 "value": env_vars.get("LLM_PROVIDER", "openai"),
                 "is_set": bool(env_vars.get("LLM_PROVIDER")),
                 "label": "LLM Provider"
+            },
+            "TTS_PROVIDER": {
+                "value": env_vars.get("TTS_PROVIDER", "google_cloud"),
+                "is_set": bool(env_vars.get("TTS_PROVIDER")),
+                "label": "TTS Provider"
             }
         }
 
@@ -1222,7 +1323,7 @@ def api_set_keys():
             existing = dotenv_values(env_path)
 
         # Update only provided keys
-        allowed_keys = {'OPENAI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'OLLAMA_BASE_URL', 'LLM_PROVIDER', 'OLLAMA_MODEL'}
+        allowed_keys = {'OPENAI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_API_KEY', 'OLLAMA_BASE_URL', 'LLM_PROVIDER', 'OLLAMA_MODEL', 'TTS_PROVIDER'}
         updated_keys = []
 
         for key, value in data.items():

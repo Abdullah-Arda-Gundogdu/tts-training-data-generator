@@ -22,10 +22,13 @@ LLM_PROVIDER=openai                           # "openai" or "ollama"
 OPENAI_API_KEY=sk-your-key-here               # Required if using OpenAI
 OLLAMA_BASE_URL=http://localhost:11434         # Required if using Ollama
 OLLAMA_MODEL=llama3.1:8b                       # Ollama model name
-GOOGLE_APPLICATION_CREDENTIALS=google_credentials.json
+TTS_PROVIDER=google_cloud                      # "google_cloud" or "gemini"
+GOOGLE_APPLICATION_CREDENTIALS=google_credentials.json  # For Google Cloud TTS
+GEMINI_API_KEY=your-gemini-api-key-here        # For Gemini 2.5 Flash TTS
 ```
 
-Place your Google Cloud service-account JSON as `google_credentials.json` in this directory.
+- **Google Cloud TTS:** Place your service-account JSON as `google_credentials.json` in this directory.
+- **Gemini TTS:** Get an API key from [Google AI Studio](https://aistudio.google.com).
 
 ### XTTS Base Files (for training)
 
@@ -48,14 +51,15 @@ python app.py
 ## Architecture
 
 ```
-app.py                    ← Flask API (main entry point)
-├── llm_service.py        ← Sentence generation (OpenAI / Ollama)
-├── google_tts_service.py ← Google Cloud TTS wrapper
-├── training_service.py   ← Training job orchestration
-├── xtts_trainer.py       ← Coqui XTTS v2 training logic
-├── inference_service.py  ← Model inference (TTS synthesis)
-├── model_registry.py     ← Trained model DB (SQLite)
-└── training_database.py  ← Training data DB (SQLite)
+app.py                     ← Flask API (main entry point)
+├── llm_service.py         ← Sentence generation (OpenAI / Ollama)
+├── google_tts_service.py  ← Google Cloud TTS wrapper
+├── gemini_tts_service.py  ← Gemini 2.5 Flash TTS wrapper
+├── training_service.py    ← Training job orchestration
+├── xtts_trainer.py        ← Coqui XTTS v2 training logic
+├── inference_service.py   ← Model inference (TTS synthesis)
+├── model_registry.py      ← Trained model DB (SQLite)
+└── training_database.py   ← Training data DB (SQLite)
 ```
 
 ## API Endpoints
@@ -66,7 +70,7 @@ app.py                    ← Flask API (main entry point)
 |--------|----------|-------------|
 | GET | `/api/health` | Health check |
 | POST | `/api/generate-sentences` | Generate sentences with LLM |
-| POST | `/api/generate-audio` | Synthesize WAV files via Google TTS |
+| POST | `/api/generate-audio` | Synthesize WAV files (Google Cloud or Gemini TTS) |
 | GET | `/api/audio/<id>/play` | Stream audio playback |
 | GET | `/api/items` | List training items |
 | PUT | `/api/items/<id>` | Update a training item |
@@ -75,7 +79,7 @@ app.py                    ← Flask API (main entry point)
 | GET | `/api/stats` | Get generation statistics |
 | POST | `/api/export` | Export metadata.csv |
 | GET | `/api/export/download` | Download latest metadata.csv |
-| GET | `/api/voices` | List available Google TTS voices |
+| GET | `/api/voices` | List available TTS voices (provider-aware) |
 
 ### Folder Management
 
@@ -94,6 +98,13 @@ app.py                    ← Flask API (main entry point)
 | GET | `/api/llm/config` | Get current LLM provider config |
 | POST | `/api/llm/config` | Set LLM provider and model |
 | GET | `/api/llm/models` | List available Ollama models |
+
+### TTS Configuration
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tts/config` | Get current TTS provider config |
+| POST | `/api/tts/config` | Set TTS provider (google_cloud / gemini) |
 
 ### Model Management
 
