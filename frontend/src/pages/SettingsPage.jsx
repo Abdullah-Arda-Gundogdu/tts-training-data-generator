@@ -70,7 +70,7 @@ function SettingsPage() {
 
     const isSecret = (keyName) => keyName.includes('KEY') || keyName.includes('SECRET')
 
-    const keyOrder = ['OPENAI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_API_KEY', 'OLLAMA_BASE_URL', 'LLM_PROVIDER', 'TTS_PROVIDER']
+    const keyOrder = ['OPENAI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_API_KEY', 'OLLAMA_BASE_URL']
 
     return (
         <div className="page-content">
@@ -165,12 +165,6 @@ function SettingsPage() {
                                 )}
                                 {keyName === 'OLLAMA_BASE_URL' && (
                                     <p className="key-hint">Ollama API sunucu adresi. Varsayılan: http://localhost:11434</p>
-                                )}
-                                {keyName === 'LLM_PROVIDER' && (
-                                    <p className="key-hint">Cümle üretimi için kullanılacak LLM sağlayıcı: "openai" veya "ollama".</p>
-                                )}
-                                {keyName === 'TTS_PROVIDER' && (
-                                    <p className="key-hint">Ses üretimi için kullanılacak TTS sağlayıcı: "google_cloud" veya "gemini".</p>
                                 )}
                             </div>
                         )
