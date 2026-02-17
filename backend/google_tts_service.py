@@ -108,7 +108,7 @@ TTS_MODELS = {
     },
 }
 
-DEFAULT_MODEL = "chirp3_hd"
+DEFAULT_MODEL = "gemini_pro"
 DEFAULT_OUTPUT_DIR = "training_output"
 
 # Global client

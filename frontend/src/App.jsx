@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom'
-import { Wand2, Volume2, RefreshCw, Check, AlertCircle, Plus, Download, Settings, Folder, FolderArchive, Trash2, Cpu, AlertTriangle, X, Brain, GraduationCap, Key, Search } from 'lucide-react'
+import { Wand2, Volume2, RefreshCw, Check, AlertCircle, Plus, Download, Settings, Folder, FolderArchive, Trash2, Cpu, AlertTriangle, X, Brain, GraduationCap, Key, Search, Info, ChevronDown, ChevronUp, ArrowRight } from 'lucide-react'
 import ModelsPage from './pages/ModelsPage'
 import TrainingPage from './pages/TrainingPage'
 import SettingsPage from './pages/SettingsPage'
@@ -41,7 +41,7 @@ function App() {
   const [volumeGainDb, setVolumeGainDb] = useState(0.0)
 
   // TTS Model settings
-  const [ttsModel, setTtsModel] = useState('chirp3_hd')
+  const [ttsModel, setTtsModel] = useState('gemini_pro')
   const [ttsModels, setTtsModels] = useState({})
   const [ttsPrompt, setTtsPrompt] = useState('')
 
@@ -59,6 +59,20 @@ function App() {
 
   // Editing state for sentences
   const [editingSentenceId, setEditingSentenceId] = useState(null)
+
+  // How It Works panel
+  const [showHowItWorks, setShowHowItWorks] = useState(() => {
+    const saved = localStorage.getItem('hideHowItWorks')
+    return saved !== 'true'
+  })
+
+  const toggleHowItWorks = () => {
+    setShowHowItWorks(prev => {
+      const next = !prev
+      localStorage.setItem('hideHowItWorks', next ? 'false' : 'true')
+      return next
+    })
+  }
 
   // Audio ref
   const audioRef = useRef(null)
@@ -275,8 +289,6 @@ function App() {
       const data = await response.json()
       if (data.success) {
         setTtsModel(modelKey)
-        const modelInfo = ttsModels[modelKey]
-        setSuccess(`✅ TTS Model: ${modelInfo?.label || modelKey}`)
         // Reload voices for the new model
         loadVoices(modelKey)
       }
@@ -801,6 +813,66 @@ function App() {
               </div>
             )}
 
+            {/* How It Works Panel */}
+            {showHowItWorks ? (
+              <div className="how-it-works-panel">
+                <div className="how-it-works-header">
+                  <div className="how-it-works-title">
+                    <Info size={18} />
+                    <span>Nasıl Çalışır?</span>
+                  </div>
+                  <button className="how-it-works-toggle" onClick={toggleHowItWorks} title="Gizle">
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="how-it-works-flow">
+                  <div className="flow-step">
+                    <div className="flow-step-icon" style={{ background: 'rgba(139, 92, 246, 0.2)', color: '#a78bfa' }}>
+                      <Wand2 size={20} />
+                    </div>
+                    <div className="flow-step-content">
+                      <strong>Kelime Girin</strong>
+                      <span>Yanlış telaffuz edilen kelimeyi yazın</span>
+                    </div>
+                  </div>
+                  <ArrowRight size={16} className="flow-arrow" />
+                  <div className="flow-step">
+                    <div className="flow-step-icon" style={{ background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa' }}>
+                      <Brain size={20} />
+                    </div>
+                    <div className="flow-step-content">
+                      <strong>AI Cümle Üretimi</strong>
+                      <span>LLM otomatik cümleler oluşturur</span>
+                    </div>
+                  </div>
+                  <ArrowRight size={16} className="flow-arrow" />
+                  <div className="flow-step">
+                    <div className="flow-step-icon" style={{ background: 'rgba(16, 185, 129, 0.2)', color: '#6ee7b7' }}>
+                      <Volume2 size={20} />
+                    </div>
+                    <div className="flow-step-content">
+                      <strong>TTS Ses Üretimi</strong>
+                      <span>Gemini TTS ile .wav dosyaları oluşturulur</span>
+                    </div>
+                  </div>
+                  <ArrowRight size={16} className="flow-arrow" />
+                  <div className="flow-step">
+                    <div className="flow-step-icon" style={{ background: 'rgba(236, 72, 153, 0.2)', color: '#f472b6' }}>
+                      <GraduationCap size={20} />
+                    </div>
+                    <div className="flow-step-content">
+                      <strong>XTTS Eğitimi</strong>
+                      <span>Verileri indirip model eğitimi yapın</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <button className="how-it-works-show-btn" onClick={toggleHowItWorks} title="Nasıl Çalışır?">
+                <Info size={14} />
+                <span>Nasıl Çalışır?</span>
+              </button>
+            )}
 
             {/* Error Reports Section */
               errorReports.length > 0 && (
@@ -1316,19 +1388,6 @@ function App() {
               </section>
             )}
 
-            {/* Help Bar - Compact */}
-            <div className="help-bar">
-              <span className="help-title">Nasıl Çalışır:</span>
-              <span className="help-step"><strong>1.</strong> Kelime girin</span>
-              <span className="help-divider">→</span>
-              <span className="help-step"><strong>2.</strong> Cümleler oluşturun</span>
-              <span className="help-divider">→</span>
-              <span className="help-step"><strong>3.</strong> Düzenleyin</span>
-              <span className="help-divider">→</span>
-              <span className="help-step"><strong>4.</strong> Ses oluşturun</span>
-              <span className="help-divider">→</span>
-              <span className="help-step"><strong>5.</strong> Dinleyin & Export</span>
-            </div>
 
           </>} />
         </Routes>

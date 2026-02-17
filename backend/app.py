@@ -66,7 +66,7 @@ os.makedirs(TRAINING_OUTPUT_DIR, exist_ok=True)
 # ============================================================================
 
 # Current TTS model: one of the keys in google_tts_service.TTS_MODELS
-_tts_model = os.getenv("TTS_MODEL", "chirp3_hd")
+_tts_model = os.getenv("TTS_MODEL", "gemini_pro")
 
 def get_tts_model():
     """Get current TTS model key."""
@@ -1326,7 +1326,7 @@ def api_get_keys():
                 "label": "LLM Provider"
             },
             "TTS_MODEL": {
-                "value": env_vars.get("TTS_MODEL", "chirp3_hd"),
+                "value": env_vars.get("TTS_MODEL", "gemini_pro"),
                 "is_set": bool(env_vars.get("TTS_MODEL")),
                 "label": "TTS Model"
             }
