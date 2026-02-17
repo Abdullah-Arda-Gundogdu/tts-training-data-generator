@@ -18,17 +18,15 @@ pip install -r backend/requirements.txt
 Copy `.env.example` to `.env` and fill in your keys:
 
 ```ini
-LLM_PROVIDER=openai                           # "openai" or "ollama"
 OPENAI_API_KEY=sk-your-key-here               # Required if using OpenAI
+LLM_PROVIDER=openai                           # "openai" or "ollama"
 OLLAMA_BASE_URL=http://localhost:11434         # Required if using Ollama
 OLLAMA_MODEL=llama3.1:8b                       # Ollama model name
-TTS_PROVIDER=google_cloud                      # "google_cloud" or "gemini"
-GOOGLE_APPLICATION_CREDENTIALS=google_credentials.json  # For Google Cloud TTS
-GEMINI_API_KEY=your-gemini-api-key-here        # For Gemini 2.5 Flash TTS
+GOOGLE_APPLICATION_CREDENTIALS=google_credentials.json  # Service-account JSON
+TTS_MODEL=chirp3_hd                            # "chirp3_hd", "gemini_flash", "gemini_pro", or "gemini_flash_lite"
 ```
 
-- **Google Cloud TTS:** Place your service-account JSON as `google_credentials.json` in this directory.
-- **Gemini TTS:** Get an API key from [Google AI Studio](https://aistudio.google.com).
+- **Google Cloud TTS:** Place your service-account JSON as `google_credentials.json` in this directory. All TTS models (including Gemini variants) use this credential.
 
 ### XTTS Base Files (for training)
 
@@ -53,8 +51,7 @@ python app.py
 ```
 app.py                     ← Flask API (main entry point)
 ├── llm_service.py         ← Sentence generation (OpenAI / Ollama)
-├── google_tts_service.py  ← Google Cloud TTS wrapper
-├── gemini_tts_service.py  ← Gemini 2.5 Flash TTS wrapper
+├── google_tts_service.py  ← Unified TTS (Chirp3 HD, Gemini Flash/Pro/Lite)
 ├── training_service.py    ← Training job orchestration
 ├── xtts_trainer.py        ← Coqui XTTS v2 training logic
 ├── inference_service.py   ← Model inference (TTS synthesis)
@@ -70,22 +67,22 @@ app.py                     ← Flask API (main entry point)
 |--------|----------|-------------|
 | GET | `/api/health` | Health check |
 | POST | `/api/generate-sentences` | Generate sentences with LLM |
-| POST | `/api/generate-audio` | Synthesize WAV files (Google Cloud or Gemini TTS) |
+| POST | `/api/generate-audio` | Synthesize WAV files (supports TTS prompt for Gemini models) |
 | GET | `/api/audio/<id>/play` | Stream audio playback |
-| GET | `/api/items` | List training items |
+| GET | `/api/items` | List training items (filterable by word, status) |
 | PUT | `/api/items/<id>` | Update a training item |
 | DELETE | `/api/items/<id>` | Delete a training item |
 | POST | `/api/items/bulk-delete` | Bulk delete items |
 | GET | `/api/stats` | Get generation statistics |
 | POST | `/api/export` | Export metadata.csv |
 | GET | `/api/export/download` | Download latest metadata.csv |
-| GET | `/api/voices` | List available TTS voices (provider-aware) |
+| GET | `/api/voices` | List available TTS voices (model-aware) |
 
 ### Folder Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/folders` | List output folders |
+| GET | `/api/folders` | List output folders (auto-cleans empty folders) |
 | DELETE | `/api/folders/<name>` | Delete a folder and its files |
 | POST | `/api/folders/bulk-delete` | Bulk delete folders |
 | GET | `/api/folders/<name>/download` | Download folder as ZIP |
@@ -103,8 +100,8 @@ app.py                     ← Flask API (main entry point)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/tts/config` | Get current TTS provider config |
-| POST | `/api/tts/config` | Set TTS provider (google_cloud / gemini) |
+| GET | `/api/tts/config` | Get current TTS model config and available models |
+| POST | `/api/tts/config` | Set TTS model (chirp3_hd / gemini_flash / gemini_pro / gemini_flash_lite) |
 
 ### Model Management
 
@@ -112,10 +109,10 @@ app.py                     ← Flask API (main entry point)
 |--------|----------|-------------|
 | GET | `/api/models` | List all trained models |
 | GET | `/api/models/<id>` | Get model details |
-| POST | `/api/models` | Register a model manually |
+| POST | `/api/models` | Register a model manually (with model_path) |
 | PUT | `/api/models/<id>` | Update model metadata |
 | DELETE | `/api/models/<id>` | Delete model and its files |
-| GET | `/api/models/<id>/test-audio` | Stream test audio |
+| GET | `/api/models/<id>/training-log` | Get training console log |
 | POST | `/api/models/<id>/synthesize` | Run inference (generate speech) |
 
 ### Training
@@ -133,7 +130,7 @@ app.py                     ← Flask API (main entry point)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/errors` | Report a mispronunciation |
-| GET | `/api/errors` | List all error reports |
+| GET | `/api/errors` | List all error reports (filterable by status) |
 | DELETE | `/api/errors/<id>` | Delete an error report |
 | PUT | `/api/errors/<id>/status` | Update report status |
 
@@ -143,3 +140,5 @@ app.py                     ← Flask API (main entry point)
 |--------|----------|-------------|
 | GET | `/api/settings/keys` | Get masked API key values |
 | PUT | `/api/settings/keys` | Update API keys in `.env` |
+| GET | `/api/settings/default-base-model` | Get current default base model |
+| PUT | `/api/settings/default-base-model` | Set default base model for training |

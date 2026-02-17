@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom'
-import { Wand2, Volume2, RefreshCw, Check, AlertCircle, Plus, Download, Settings, Folder, FolderArchive, Trash2, Cpu, AlertTriangle, X, Brain, GraduationCap, Key, Sparkles } from 'lucide-react'
+import { Wand2, Volume2, RefreshCw, Check, AlertCircle, Plus, Download, Settings, Folder, FolderArchive, Trash2, Cpu, AlertTriangle, X, Brain, GraduationCap, Key, Search } from 'lucide-react'
 import ModelsPage from './pages/ModelsPage'
 import TrainingPage from './pages/TrainingPage'
 import SettingsPage from './pages/SettingsPage'
@@ -22,6 +22,7 @@ function App() {
   const [folders, setFolders] = useState([])
   const [selectedFolders, setSelectedFolders] = useState(new Set())
   const [isDownloadingFolders, setIsDownloadingFolders] = useState(false)
+  const [folderSearch, setFolderSearch] = useState('')
 
   // Error reports
   const [errorReports, setErrorReports] = useState([])
@@ -39,9 +40,10 @@ function App() {
   const [pitch, setPitch] = useState(0.0)
   const [volumeGainDb, setVolumeGainDb] = useState(0.0)
 
-  // TTS Provider settings
-  const [ttsProvider, setTtsProvider] = useState('google_cloud')
-  const [geminiAvailable, setGeminiAvailable] = useState(false)
+  // TTS Model settings
+  const [ttsModel, setTtsModel] = useState('chirp3_hd')
+  const [ttsModels, setTtsModels] = useState({})
+  const [ttsPrompt, setTtsPrompt] = useState('')
 
   // Loading states
   const [isGeneratingSentences, setIsGeneratingSentences] = useState(false)
@@ -121,14 +123,15 @@ function App() {
     }
   }
 
-  const loadVoices = async () => {
+  const loadVoices = async (modelKey = null) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/voices`)
+      const m = modelKey || ttsModel
+      const response = await fetch(`${API_BASE_URL}/api/voices?model=${m}`)
       const data = await response.json()
       if (data.success) {
         setVoices(data.voices)
         const voiceKeys = Object.keys(data.voices)
-        // Always reset voice selection when the voice list changes provider
+        // Reset voice selection when the voice list changes
         setVoice(prev => {
           if (voiceKeys.length > 0 && !voiceKeys.includes(prev)) {
             return voiceKeys[0]
@@ -228,6 +231,10 @@ function App() {
   }
 
   const switchLLMProvider = async (provider, model = null) => {
+    // Optimistic UI update — change immediately
+    setLlmProvider(provider)
+    if (model) setSelectedOllamaModel(model)
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/llm/config`, {
         method: 'POST',
@@ -235,13 +242,13 @@ function App() {
         body: JSON.stringify({ provider, model })
       })
       const data = await response.json()
-      if (data.success) {
-        setLlmProvider(data.config.provider)
-        if (model) setSelectedOllamaModel(model)
-        setSuccess(`✅ LLM provider: ${provider}${model ? ` (${model})` : ''}`)
+      if (!data.success) {
+        // Revert on failure
+        loadLLMConfig()
       }
     } catch (err) {
       setError('LLM provider değiştirilemedi: ' + err.message)
+      loadLLMConfig() // Revert
     }
   }
 
@@ -250,31 +257,31 @@ function App() {
       const response = await fetch(`${API_BASE_URL}/api/tts/config`)
       const data = await response.json()
       if (data.success) {
-        setTtsProvider(data.provider)
-        setGeminiAvailable(data.gemini_available)
+        setTtsModel(data.model)
+        setTtsModels(data.models || {})
       }
     } catch (err) {
       console.error('TTS config yüklenemedi:', err)
     }
   }
 
-  const switchTTSProvider = async (provider) => {
+  const switchTTSModel = async (modelKey) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/tts/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider })
+        body: JSON.stringify({ model: modelKey })
       })
       const data = await response.json()
       if (data.success) {
-        setTtsProvider(provider)
-        setSuccess(`✅ TTS provider: ${provider === 'gemini' ? 'Gemini 2.5 Flash' : 'Google Cloud TTS'}`)
-        // Reload voices and TTS config (refreshes geminiAvailable)
-        loadVoices()
-        loadTTSConfig()
+        setTtsModel(modelKey)
+        const modelInfo = ttsModels[modelKey]
+        setSuccess(`✅ TTS Model: ${modelInfo?.label || modelKey}`)
+        // Reload voices for the new model
+        loadVoices(modelKey)
       }
     } catch (err) {
-      setError('TTS provider değiştirilemedi: ' + err.message)
+      setError('TTS model değiştirilemedi: ' + err.message)
     }
   }
 
@@ -558,7 +565,8 @@ function App() {
           voice,
           speakingRate,
           pitch,
-          volumeGainDb
+          volumeGainDb,
+          ttsPrompt: ttsPrompt || undefined
         })
       })
 
@@ -1037,39 +1045,29 @@ function App() {
                     <div className="tts-settings-panel">
                       <div className="settings-header">
                         <h3><Settings size={16} /> TTS Ayarları</h3>
-                        <span style={{ fontSize: '0.7rem', color: ttsProvider === 'gemini' ? '#a78bfa' : '#60a5fa', background: ttsProvider === 'gemini' ? 'rgba(167,139,250,0.1)' : 'rgba(96,165,250,0.1)', padding: '2px 8px', borderRadius: '8px' }}>
-                          {ttsProvider === 'gemini' ? '✨ Gemini' : '☁️ Google Cloud'}
+                        <span style={{ fontSize: '0.7rem', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', padding: '2px 8px', borderRadius: '8px' }}>
+                          {ttsModels[ttsModel]?.label || ttsModel}
                         </span>
                       </div>
 
-                      {/* TTS Provider Toggle */}
-                      <div style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
-                        <button
-                          onClick={() => switchTTSProvider('google_cloud')}
-                          className={`btn btn-small ${ttsProvider === 'google_cloud' ? 'btn-primary' : 'btn-ghost'}`}
-                          style={{ flex: 1, fontSize: '0.75rem', padding: '6px 8px' }}
-                        >
-                          ☁️ Google Cloud
-                        </button>
-                        <button
-                          onClick={() => switchTTSProvider('gemini')}
-                          className={`btn btn-small ${ttsProvider === 'gemini' ? 'btn-primary' : 'btn-ghost'}`}
-                          style={{ flex: 1, fontSize: '0.75rem', padding: '6px 8px' }}
-                          title={!geminiAvailable ? 'Gemini API Key gerekli — Ayarlar sayfasından ekleyin' : ''}
-                        >
-                          <Sparkles size={12} /> Gemini 2.5
-                        </button>
+                      {/* TTS Model Selection — 4 buttons */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '12px' }}>
+                        {Object.entries(ttsModels).map(([key, model]) => (
+                          <button
+                            key={key}
+                            onClick={() => switchTTSModel(key)}
+                            className={`btn btn-small ${ttsModel === key ? 'btn-primary' : 'btn-ghost'}`}
+                            style={{ fontSize: '0.7rem', padding: '8px 6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                            title={model.description}
+                          >
+                            {model.label}
+                          </button>
+                        ))}
                       </div>
-
-                      {ttsProvider === 'gemini' && !geminiAvailable && (
-                        <div style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '8px', padding: '8px 10px', marginBottom: '10px', fontSize: '0.75rem', color: '#fbbf24' }}>
-                          ⚠️ Gemini API Key ayarlanmamış. <strong>Ayarlar</strong> sayfasından ekleyin.
-                        </div>
-                      )}
 
                       <div className="settings-grid">
                         <div className="setting-item">
-                          <label>Ses Modeli</label>
+                          <label>Ses</label>
                           <select value={voice} onChange={(e) => setVoice(e.target.value)} className="select-input">
                             {Object.entries(voices).map(([key, name]) => (
                               <option key={key} value={key}>{name}</option>
@@ -1077,21 +1075,35 @@ function App() {
                           </select>
                         </div>
 
-                        <div className="setting-item">
-                          <label>Hız: {speakingRate}x</label>
-                          <input
-                            type="range"
-                            min="0.25"
-                            max="4.0"
-                            step="0.25"
-                            value={speakingRate}
-                            onChange={(e) => setSpeakingRate(parseFloat(e.target.value))}
-                            className="range-input"
-                          />
-                        </div>
+                        {/* Prompt textarea for Gemini models */}
+                        {ttsModels[ttsModel] && !ttsModels[ttsModel].supports_ssml_params && (
+                          <div className="setting-item" style={{ gridColumn: '1 / -1' }}>
+                            <label>Prompt (stil yönlendirmesi)</label>
+                            <textarea
+                              value={ttsPrompt}
+                              onChange={(e) => setTtsPrompt(e.target.value)}
+                              placeholder="Örn: Speak slowly and clearly with a warm tone"
+                              rows={2}
+                              style={{ width: '100%', resize: 'vertical', fontSize: '0.8rem', padding: '6px 8px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text)', fontFamily: 'inherit' }}
+                            />
+                          </div>
+                        )}
 
-                        {ttsProvider === 'google_cloud' && (
+                        {ttsModels[ttsModel]?.supports_ssml_params && (
                           <>
+                            <div className="setting-item">
+                              <label>Hız: {speakingRate}x</label>
+                              <input
+                                type="range"
+                                min="0.25"
+                                max="4.0"
+                                step="0.25"
+                                value={speakingRate}
+                                onChange={(e) => setSpeakingRate(parseFloat(e.target.value))}
+                                className="range-input"
+                              />
+                            </div>
+
                             <div className="setting-item">
                               <label>Pitch: {pitch}</label>
                               <input
@@ -1246,8 +1258,23 @@ function App() {
                     </button>
                   </div>
                 </div>
+                <div style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(0,0,0,0.15)', borderTop: '1px solid rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                  <Search size={14} style={{ opacity: 0.4, flexShrink: 0 }} />
+                  <input
+                    type="text"
+                    placeholder="Klasör ara..."
+                    value={folderSearch}
+                    onChange={(e) => setFolderSearch(e.target.value)}
+                    style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'inherit', fontSize: '0.85rem', padding: '2px 0' }}
+                  />
+                  {folderSearch && (
+                    <button onClick={() => setFolderSearch('')} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: '2px', display: 'flex' }}>
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
                 <div className="folder-grid">
-                  {folders.map((folder) => (
+                  {folders.filter(f => f.name.toLowerCase().includes(folderSearch.toLowerCase())).map((folder) => (
                     <div
                       key={folder.name}
                       className={`folder-item ${selectedFolders.has(folder.name) ? 'selected' : ''}`}

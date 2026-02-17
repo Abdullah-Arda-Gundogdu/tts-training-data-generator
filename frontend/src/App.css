@@ -136,6 +136,101 @@ body {
   }
 }
 
+/* Page Header (model & training pages) */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+}
+
+.page-header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.page-header h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.page-header p {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+/* Page Content */
+.page-content {
+  width: 100%;
+}
+
+/* Models Toolbar */
+.models-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.search-box {
+  flex: 1;
+  min-width: 200px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.85rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.search-box input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.search-box input::placeholder {
+  color: var(--text-dim);
+}
+
+.filter-buttons {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+/* Small success button */
+.btn-success-small {
+  background: rgba(16, 185, 129, 0.15);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.btn-success-small:hover {
+  background: rgba(16, 185, 129, 0.25);
+}
+
+/* Small danger button */
+.btn-danger-small {
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.btn-danger-small:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
 /* Phases Grid */
 .phases-grid {
   display: grid;
@@ -1390,9 +1485,9 @@ body {
 }
 
 .status-cancelled {
-  background: rgba(148, 163, 184, 0.15);
-  color: #94a3b8;
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(251, 146, 60, 0.12);
+  color: #fdba74;
+  border: 1px solid rgba(251, 146, 60, 0.25);
 }
 
 @keyframes trainPulse {
@@ -2144,4 +2239,215 @@ body {
 .model-card-active {
   border-color: rgba(139, 92, 246, 0.4) !important;
   box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.15);
+}
+
+/* ======================================================================
+   MODEL LIST (Horizontal Rows)
+   ====================================================================== */
+
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1rem 1.25rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: all 0.2s;
+}
+
+.model-row:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.model-row-active {
+  border-color: rgba(139, 92, 246, 0.4) !important;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.15);
+}
+
+.model-row-default {
+  border-color: rgba(251, 191, 36, 0.25);
+}
+
+.model-row-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.model-row-top {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.model-row-name {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.default-star {
+  color: #fbbf24;
+  flex-shrink: 0;
+}
+
+.model-row-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 500px;
+}
+
+.model-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.model-row-date {
+  white-space: nowrap;
+}
+
+.model-row-base {
+  padding: 0.1rem 0.4rem;
+  background: rgba(139, 92, 246, 0.1);
+  border-radius: 6px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.model-row-tags {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.tag-badge-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0.1rem 0.35rem;
+  background: rgba(139, 92, 246, 0.08);
+  border-radius: 6px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.param-chip-sm {
+  padding: 0.1rem 0.4rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.model-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+/* Set as Default button (active state) */
+.btn-default-active {
+  background: rgba(251, 191, 36, 0.15) !important;
+  color: #fbbf24 !important;
+  border: 1px solid rgba(251, 191, 36, 0.3) !important;
+}
+
+.btn-default-active:hover {
+  background: rgba(251, 191, 36, 0.25) !important;
+}
+
+/* Responsive model rows */
+@media (max-width: 900px) {
+  .model-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .model-row-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+}
+
+/* ======================================================================
+   CONFIRMATION MODAL
+   ====================================================================== */
+
+.modal-confirm {
+  max-width: 420px;
+}
+
+.modal-confirm .btn-danger {
+  padding: 0.6rem 1.5rem;
+}
+
+/* ======================================================================
+   LOG MODAL
+   ====================================================================== */
+
+.modal-log {
+  max-width: 800px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.log-modal-content {
+  min-height: 300px;
+  max-height: 55vh;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.4);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  padding: 1rem;
+}
+
+.log-modal-content pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  color: #a8e6cf;
+}
+
+/* Spin animation for loader */
+.spin {
+  animation: spinAnim 1s linear infinite;
+}
+
+@keyframes spinAnim {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }

@@ -28,7 +28,6 @@ from llm_service import (
     get_ollama_models
 )
 import google_tts_service
-import gemini_tts_service
 from google_tts_service import DEFAULT_OUTPUT_DIR
 from training_database import (
     add_training_item,
@@ -49,7 +48,8 @@ from training_database import (
     delete_items_by_word
 )
 from model_registry import (
-    get_models, get_model, add_model, update_model, delete_model
+    get_models, get_model, add_model, update_model, delete_model,
+    get_training_log, get_default_base_model, set_default_base_model
 )
 import training_service
 import inference_service
@@ -62,33 +62,25 @@ TRAINING_OUTPUT_DIR = "training_output"
 os.makedirs(TRAINING_OUTPUT_DIR, exist_ok=True)
 
 # ============================================================================
-# TTS PROVIDER MANAGEMENT
+# TTS MODEL MANAGEMENT
 # ============================================================================
 
-# Current TTS provider: "google_cloud" or "gemini"
-_tts_provider = os.getenv("TTS_PROVIDER", "google_cloud")
+# Current TTS model: one of the keys in google_tts_service.TTS_MODELS
+_tts_model = os.getenv("TTS_MODEL", "chirp3_hd")
 
-def get_tts_provider():
-    """Get current TTS provider name."""
-    return _tts_provider
+def get_tts_model():
+    """Get current TTS model key."""
+    return _tts_model
 
-def set_tts_provider(provider: str):
-    """Set the active TTS provider."""
-    global _tts_provider
-    if provider not in ("google_cloud", "gemini"):
-        raise ValueError(f"Invalid TTS provider: {provider}. Must be 'google_cloud' or 'gemini'.")
-    _tts_provider = provider
-    # Reset Gemini client if switching away (so new API key takes effect next time)
-    if provider != "gemini":
-        gemini_tts_service.reset_client()
-    print(f"🔊 TTS provider set to: {provider}")
-    return provider
-
-def get_active_tts_service():
-    """Get the active TTS service module."""
-    if _tts_provider == "gemini":
-        return gemini_tts_service
-    return google_tts_service
+def set_tts_model(model_key: str):
+    """Set the active TTS model."""
+    global _tts_model
+    valid_models = list(google_tts_service.TTS_MODELS.keys())
+    if model_key not in valid_models:
+        raise ValueError(f"Invalid TTS model: {model_key}. Must be one of: {valid_models}")
+    _tts_model = model_key
+    print(f"🔊 TTS model set to: {model_key}")
+    return model_key
 
 
 @app.route('/api/health', methods=['GET'])
@@ -191,14 +183,15 @@ def api_generate_audio():
         if not isinstance(sentences, list) or len(sentences) == 0:
             return jsonify({"error": "sentences must be a non-empty array"}), 400
         
-        # Get the active TTS service
-        tts_service = get_active_tts_service()
-        provider = get_tts_provider()
+        # Get the active TTS model
+        model_key = get_tts_model()
+        model_def = google_tts_service.TTS_MODELS.get(model_key, google_tts_service.TTS_MODELS[google_tts_service.DEFAULT_MODEL])
         
-        voice = data.get('voice', 'tr-TR-Wavenet-D' if provider == 'google_cloud' else 'Kore')
+        voice = data.get('voice', model_def['default_voice'])
         speaking_rate = float(data.get('speakingRate', 1.0))
         pitch = float(data.get('pitch', 0.0))
         volume_gain_db = float(data.get('volumeGainDb', 0.0))
+        tts_prompt = data.get('ttsPrompt', '').strip() or None
         
         results = []
         
@@ -229,23 +222,26 @@ def api_generate_audio():
                 })
                 continue
             
-            # Create word-based subfolder
-            word_folder = os.path.join(TRAINING_OUTPUT_DIR, word.lower()) if word else TRAINING_OUTPUT_DIR
+            # Create word-based subfolder (sanitize word for filesystem safety)
+            safe_word = word.lower().replace('/', '_').replace('\\', '_').replace(':', '_').replace('*', '_').replace('?', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace('|', '_').strip('_') if word else ''
+            word_folder = os.path.join(TRAINING_OUTPUT_DIR, safe_word) if safe_word else TRAINING_OUTPUT_DIR
             os.makedirs(word_folder, exist_ok=True)
-            output_path = tts_service.generate_training_filename(text, word_folder)
+            output_path = google_tts_service.generate_training_filename(text, word_folder)
             
-            result = tts_service.synthesize_speech(
+            result = google_tts_service.synthesize_speech(
                 text=text,
                 output_path=output_path,
                 voice_name=voice,
                 speaking_rate=speaking_rate,
                 pitch=pitch,
-                volume_gain_db=volume_gain_db
+                volume_gain_db=volume_gain_db,
+                model_key=model_key,
+                prompt=tts_prompt
             )
             
             if result["success"]:
                 item_id = add_training_item(
-                    word=word,
+                    word=safe_word or word,
                     sentence=text,
                     wav_path=result["path"],
                     voice=voice,
@@ -257,14 +253,7 @@ def api_generate_audio():
             
             results.append(result)
             
-            # Rate limit delay for Gemini free tier (3 req/min)
-            if provider == 'gemini' and result.get("success"):
-                import time
-                remaining = len(sentences) - len(results)
-                if remaining > 0:
-                    delay = getattr(gemini_tts_service, 'RATE_LIMIT_DELAY', 22)
-                    print(f"⏳ [Gemini] Rate limit: waiting {delay}s ({remaining} remaining)...")
-                    time.sleep(delay)
+            # No rate limit delay needed — Google Cloud TTS has generous quotas
         
         successful = sum(1 for r in results if r.get("success"))
         
@@ -507,45 +496,45 @@ def api_get_stats():
 
 @app.route('/api/voices', methods=['GET'])
 def api_get_voices():
-    """Get available TTS voices for the active provider."""
-    tts_service = get_active_tts_service()
+    """Get available TTS voices for the active model."""
+    model_key = request.args.get('model', get_tts_model())
     return jsonify({
         "success": True,
-        "voices": tts_service.get_available_voices(),
-        "provider": get_tts_provider()
+        "voices": google_tts_service.get_available_voices(model_key),
+        "model": model_key
     })
 
 
 @app.route('/api/tts/config', methods=['GET'])
 def api_get_tts_config():
-    """Get current TTS provider configuration."""
-    provider = get_tts_provider()
-    gemini_available = bool(os.getenv("GEMINI_API_KEY", "")) and os.getenv("GEMINI_API_KEY", "") != "your-gemini-api-key-here"
+    """Get current TTS model configuration."""
+    model_key = get_tts_model()
     return jsonify({
         "success": True,
-        "provider": provider,
-        "providers": ["google_cloud", "gemini"],
-        "gemini_available": gemini_available
+        "model": model_key,
+        "models": google_tts_service.get_available_models()
     })
 
 
 @app.route('/api/tts/config', methods=['POST'])
 def api_set_tts_config():
-    """Set TTS provider."""
+    """Set TTS model."""
     try:
         data = request.get_json() or {}
-        provider = data.get('provider')
+        model_key = data.get('model')
         
-        if not provider:
-            return jsonify({"error": "provider field is required"}), 400
+        if not model_key:
+            return jsonify({"error": "model field is required"}), 400
         
-        set_tts_provider(provider)
+        set_tts_model(model_key)
         
         # Persist to .env
         env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
         from dotenv import dotenv_values
         existing = dotenv_values(env_path) if os.path.exists(env_path) else {}
-        existing['TTS_PROVIDER'] = provider
+        existing['TTS_MODEL'] = model_key
+        # Remove old TTS_PROVIDER key if present
+        existing.pop('TTS_PROVIDER', None)
         with open(env_path, 'w', encoding='utf-8') as f:
             f.write("# Environment variables for Training Data Generator\n")
             f.write("# Updated via Settings UI\n\n")
@@ -554,7 +543,7 @@ def api_set_tts_config():
         
         return jsonify({
             "success": True,
-            "provider": provider
+            "model": model_key
         })
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -620,11 +609,18 @@ def api_get_folders():
                 path = os.path.join(TRAINING_OUTPUT_DIR, name)
                 if os.path.isdir(path):
                     wav_files = [f for f in os.listdir(path) if f.endswith('.wav')]
-                    if len(wav_files) > 0:  # Only show folders with files
+                    if len(wav_files) > 0:
                         folders.append({
                             "name": name,
                             "file_count": len(wav_files)
                         })
+                    else:
+                        # Auto-cleanup: remove empty folders
+                        try:
+                            shutil.rmtree(path)
+                            print(f"🧹 Cleaned up empty folder: {name}")
+                        except Exception:
+                            pass
         return jsonify({
             "success": True,
             "folders": folders
@@ -1154,6 +1150,43 @@ def api_model_synthesize(model_id: int):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/models/<int:model_id>/training-log', methods=['GET'])
+def api_model_training_log(model_id: int):
+    """Get the training console log for a model."""
+    try:
+        model = get_model(model_id)
+        if not model:
+            return jsonify({"error": "Model not found"}), 404
+        log = get_training_log(model_id, max_chars=500_000)
+        return jsonify({"success": True, "log": log})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/settings/default-base-model', methods=['GET'])
+def api_get_default_base_model():
+    """Get the default base model for training."""
+    try:
+        result = get_default_base_model()
+        return jsonify({"success": True, **result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/settings/default-base-model', methods=['PUT'])
+def api_set_default_base_model():
+    """Set the default base model for training."""
+    try:
+        data = request.get_json() or {}
+        model_id = data.get('model_id')
+        result = set_default_base_model(model_id)
+        return jsonify({"success": True, **result})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ============================================================================
 # TRAINING API
 # ============================================================================
@@ -1282,11 +1315,6 @@ def api_get_keys():
                 "is_set": bool(env_vars.get("GOOGLE_APPLICATION_CREDENTIALS")),
                 "label": "Google Cloud Credentials Path"
             },
-            "GEMINI_API_KEY": {
-                "value": mask_key(env_vars.get("GEMINI_API_KEY", "")),
-                "is_set": bool(env_vars.get("GEMINI_API_KEY")) and env_vars.get("GEMINI_API_KEY") != "your-gemini-api-key-here",
-                "label": "Gemini API Key"
-            },
             "OLLAMA_BASE_URL": {
                 "value": env_vars.get("OLLAMA_BASE_URL", "http://localhost:11434"),
                 "is_set": bool(env_vars.get("OLLAMA_BASE_URL")),
@@ -1297,10 +1325,10 @@ def api_get_keys():
                 "is_set": bool(env_vars.get("LLM_PROVIDER")),
                 "label": "LLM Provider"
             },
-            "TTS_PROVIDER": {
-                "value": env_vars.get("TTS_PROVIDER", "google_cloud"),
-                "is_set": bool(env_vars.get("TTS_PROVIDER")),
-                "label": "TTS Provider"
+            "TTS_MODEL": {
+                "value": env_vars.get("TTS_MODEL", "chirp3_hd"),
+                "is_set": bool(env_vars.get("TTS_MODEL")),
+                "label": "TTS Model"
             }
         }
 
@@ -1323,7 +1351,7 @@ def api_set_keys():
             existing = dotenv_values(env_path)
 
         # Update only provided keys
-        allowed_keys = {'OPENAI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_API_KEY', 'OLLAMA_BASE_URL', 'LLM_PROVIDER', 'OLLAMA_MODEL', 'TTS_PROVIDER'}
+        allowed_keys = {'OPENAI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'OLLAMA_BASE_URL', 'LLM_PROVIDER', 'OLLAMA_MODEL', 'TTS_MODEL'}
         updated_keys = []
 
         for key, value in data.items():

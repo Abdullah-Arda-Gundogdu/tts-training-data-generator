@@ -70,7 +70,7 @@ function SettingsPage() {
 
     const isSecret = (keyName) => keyName.includes('KEY') || keyName.includes('SECRET')
 
-    const keyOrder = ['OPENAI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_API_KEY', 'OLLAMA_BASE_URL']
+    const keyOrder = ['OPENAI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'OLLAMA_BASE_URL']
 
     return (
         <div className="page-content">
@@ -160,9 +160,7 @@ function SettingsPage() {
                                 {keyName === 'GOOGLE_APPLICATION_CREDENTIALS' && (
                                     <p className="key-hint">Google Cloud servis hesap JSON dosyasının yolu. Google Cloud TTS için kullanılır.</p>
                                 )}
-                                {keyName === 'GEMINI_API_KEY' && (
-                                    <p className="key-hint">Gemini 2.5 Flash TTS ile ses üretimi için gereklidir. <a href="https://aistudio.google.com" target="_blank" rel="noreferrer">Anahtar al →</a></p>
-                                )}
+
                                 {keyName === 'OLLAMA_BASE_URL' && (
                                     <p className="key-hint">Ollama API sunucu adresi. Varsayılan: http://localhost:11434</p>
                                 )}
@@ -191,10 +189,7 @@ function SettingsPage() {
                         <strong>OpenAI API Key</strong> — GPT ile cümle üretimi için gereklidir. <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">Anahtar al →</a>
                     </div>
                     <div className="info-item">
-                        <strong>Google Cloud Credentials</strong> — Google Cloud TTS ile ses dosyası oluşturma için gereklidir. JSON formatında bir servis hesap dosyası kullanılır.
-                    </div>
-                    <div className="info-item">
-                        <strong>Gemini API Key</strong> — Gemini 2.5 Flash TTS ile doğal ses üretimi için gereklidir. <a href="https://aistudio.google.com" target="_blank" rel="noreferrer">Google AI Studio →</a>
+                        <strong>Google Cloud Credentials</strong> — Tüm TTS modelleri (Gemini Flash, Gemini Pro, Chirp 3 HD) için gereklidir. JSON formatında bir servis hesap dosyası kullanılır.
                     </div>
                     <div className="info-item">
                         <strong>Ollama</strong> — Yerel LLM kullanmak istiyorsanız Ollama sunucusu çalışıyor olmalıdır. <a href="https://ollama.ai" target="_blank" rel="noreferrer">Ollama →</a>

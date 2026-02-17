@@ -1,7 +1,12 @@
 """
-Google TTS Service - Text-to-Speech Audio Generation
+Google Cloud TTS Service - Unified Text-to-Speech Audio Generation
 
 This module handles generating .wav files from text using Google Cloud TTS API.
+Supports 4 model families:
+  - Gemini Flash TTS (gemini-2.5-flash-tts)
+  - Gemini Pro TTS (gemini-2.5-pro-tts)
+  - Gemini 2.5 Flash Lite Preview TTS (gemini-2.5-flash-lite-preview-tts)
+  - Chirp 3: HD (chirp3_hd)
 """
 
 import os
@@ -14,11 +19,46 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Available Turkish voices
-TURKISH_VOICES = {
-    # Chirp 3 HD (New - Most Realistic)
+# =============================================================================
+# MODEL DEFINITIONS
+# =============================================================================
+
+# Gemini TTS voices (shared across Gemini Flash, Pro, and Flash Lite models)
+GEMINI_VOICES = {
+    "Achernar": "Female (Achernar - Clear, Friendly)",
+    "Achird": "Male (Achird - Youthful, Inquisitive)",
+    "Algenib": "Male (Algenib - Warm, Confident)",
+    "Alnilam": "Male (Alnilam - Energetic, Excited)",
+    "Aoede": "Female (Aoede - Conversational, Thoughtful)",
+    "Autonoe": "Female (Autonoe - Mature, Resonant)",
+    "Callirrhoe": "Female (Callirrhoe - Professional, Energetic)",
+    "Charon": "Male (Charon - Deep, Authoritative)",
+    "Despina": "Female (Despina - Warm, Inviting)",
+    "Enceladus": "Male (Enceladus - Breathy, Calm)",
+    "Erinome": "Female (Erinome - Expressive, Dynamic)",
+    "Fenrir": "Male (Fenrir - Bold, Intense)",
+    "Gacrux": "Female (Gacrux - Smooth, Articulate)",
+    "Iapetus": "Male (Iapetus - Friendly, Casual)",
+    "Kore": "Female (Kore - Clear, Versatile)",
+    "Laomedeia": "Female (Laomedeia - Conversational, Engaging)",
+    "Leda": "Female (Leda - Professional, Calm)",
+    "Orus": "Male (Orus - Mature, Thoughtful)",
+    "Puck": "Male (Puck - Upbeat, Energetic)",
+    "Rasalgethi": "Male (Rasalgethi - Warm, Composed)",
+    "Sadachbia": "Male (Sadachbia - Steady, Clear)",
+    "Sadaltager": "Male (Sadaltager - Friendly, Enthusiastic)",
+    "Schedar": "Male (Schedar - Informal, Approachable)",
+    "Sulafat": "Female (Sulafat - Confident, Articulate)",
+    "Umbriel": "Male (Umbriel - Smooth, Measured)",
+    "Vindemiatrix": "Female (Vindemiatrix - Elegant, Poised)",
+    "Zephyr": "Female (Zephyr - Light, Airy)",
+    "Zubenelgenubi": "Male (Zubenelgenubi - Rich, Commanding)",
+}
+
+# Chirp 3 HD voices (Turkish-specific with language prefix)
+CHIRP3_HD_VOICES = {
     "tr-TR-Chirp3-HD-Leda": "Female (Chirp3 HD Leda)",
-    "tr-TR-Chirp3-HD-Orus": "Male (Chirp3 HD Orus)", 
+    "tr-TR-Chirp3-HD-Orus": "Male (Chirp3 HD Orus)",
     "tr-TR-Chirp3-HD-Puck": "Male (Chirp3 HD Puck)",
     "tr-TR-Chirp3-HD-Pulcherrima": "Female (Chirp3 HD Pulcherrima)",
     "tr-TR-Chirp3-HD-Rasalgethi": "Male (Chirp3 HD Rasalgethi)",
@@ -30,23 +70,45 @@ TURKISH_VOICES = {
     "tr-TR-Chirp3-HD-Vindemiatrix": "Female (Chirp3 HD Vindemiatrix)",
     "tr-TR-Chirp3-HD-Zephyr": "Female (Chirp3 HD Zephyr)",
     "tr-TR-Chirp3-HD-Zubenelgenubi": "Male (Chirp3 HD Zubenelgenubi)",
-
-    # Wavenet (High Quality)
-    "tr-TR-Wavenet-A": "Female (Wavenet A)",
-    "tr-TR-Wavenet-B": "Male (Wavenet B)", 
-    "tr-TR-Wavenet-C": "Female (Wavenet C)",
-    "tr-TR-Wavenet-D": "Female (Wavenet D)",
-    "tr-TR-Wavenet-E": "Male (Wavenet E)",
-
-    # Standard (Basic)
-    "tr-TR-Standard-A": "Female (Standard A)",
-    "tr-TR-Standard-B": "Male (Standard B)",
-    "tr-TR-Standard-C": "Female (Standard C)",
-    "tr-TR-Standard-D": "Female (Standard D)",
-    "tr-TR-Standard-E": "Male (Standard E)",
 }
 
-DEFAULT_VOICE = "tr-TR-Wavenet-D"
+# All available TTS models
+TTS_MODELS = {
+    "gemini_flash": {
+        "label": "Gemini Flash TTS",
+        "model_name": "gemini-2.5-flash-tts",
+        "description": "Fast, high-quality Gemini TTS",
+        "voices": GEMINI_VOICES,
+        "default_voice": "Kore",
+        "supports_ssml_params": False,
+    },
+    "chirp3_hd": {
+        "label": "Chirp 3: HD",
+        "model_name": None,
+        "description": "Classic high-definition TTS",
+        "voices": CHIRP3_HD_VOICES,
+        "default_voice": "tr-TR-Chirp3-HD-Leda",
+        "supports_ssml_params": True,
+    },
+    "gemini_pro": {
+        "label": "Gemini Pro TTS",
+        "model_name": "gemini-2.5-pro-tts",
+        "description": "Highest quality Gemini TTS",
+        "voices": GEMINI_VOICES,
+        "default_voice": "Kore",
+        "supports_ssml_params": False,
+    },
+    "gemini_flash_lite": {
+        "label": "Gemini 2.5 Flash Lite Preview TTS",
+        "model_name": "gemini-2.5-flash-lite-preview-tts",
+        "description": "Lightweight preview model",
+        "voices": GEMINI_VOICES,
+        "default_voice": "Kore",
+        "supports_ssml_params": False,
+    },
+}
+
+DEFAULT_MODEL = "chirp3_hd"
 DEFAULT_OUTPUT_DIR = "training_output"
 
 # Global client
@@ -93,9 +155,36 @@ def get_client():
     return _client
 
 
-def get_available_voices() -> Dict[str, str]:
-    """Return available Turkish voice options."""
-    return TURKISH_VOICES
+def get_available_models() -> Dict:
+    """Return all available TTS model definitions."""
+    return {
+        key: {
+            "label": model["label"],
+            "description": model["description"],
+            "supports_ssml_params": model["supports_ssml_params"],
+            "default_voice": model["default_voice"],
+        }
+        for key, model in TTS_MODELS.items()
+    }
+
+
+def get_available_voices(model_key: str = None) -> Dict[str, str]:
+    """
+    Return available voice options for a given model.
+    
+    Args:
+        model_key: One of 'gemini_flash', 'gemini_pro', 'gemini_flash_lite', 'chirp3_hd'
+                   If None, returns voices for the default model.
+    """
+    if model_key is None:
+        model_key = DEFAULT_MODEL
+    
+    model = TTS_MODELS.get(model_key)
+    if not model:
+        print(f"⚠️ Unknown model key: {model_key}, falling back to {DEFAULT_MODEL}")
+        model = TTS_MODELS[DEFAULT_MODEL]
+    
+    return model["voices"]
 
 
 def sanitize_filename(text: str, max_length: int = 30) -> str:
@@ -128,25 +217,29 @@ def sanitize_filename(text: str, max_length: int = 30) -> str:
 def synthesize_speech(
     text: str,
     output_path: str,
-    voice_name: str = DEFAULT_VOICE,
+    voice_name: str = None,
     language_code: str = "tr-TR",
     sample_rate: int = 22050,
     speaking_rate: float = 1.0,
     pitch: float = 0.0,
-    volume_gain_db: float = 0.0
+    volume_gain_db: float = 0.0,
+    model_key: str = None,
+    prompt: str = None
 ) -> Dict:
     """
-    Generate a .wav file from text using Google TTS.
+    Generate a .wav file from text using Google Cloud TTS.
     
     Args:
         text: The text to synthesize
         output_path: Full path for the output .wav file
-        voice_name: Google TTS voice name
+        voice_name: Voice name (e.g., 'Kore' for Gemini, 'tr-TR-Chirp3-HD-Leda' for Chirp3)
         language_code: Language code
         sample_rate: Audio sample rate (22050 for XTTS compatibility)
-        speaking_rate: Speed of speech (0.25 to 4.0)
-        pitch: Voice pitch (-20.0 to 20.0 semitones)
-        volume_gain_db: Volume gain (-96.0 to 16.0 dB)
+        speaking_rate: Speed of speech (0.25 to 4.0) — Chirp3 HD only
+        pitch: Voice pitch (-20.0 to 20.0 semitones) — Chirp3 HD only
+        volume_gain_db: Volume gain (-96.0 to 16.0 dB) — Chirp3 HD only
+        model_key: TTS model key (gemini_flash, gemini_pro, gemini_flash_lite, chirp3_hd)
+        prompt: Style/tone prompt for Gemini models (e.g., 'Speak slowly and clearly')
     
     Returns:
         Dict with file info (path, duration estimate, etc.)
@@ -154,26 +247,52 @@ def synthesize_speech(
     try:
         client = get_client()
         
-        # Set up synthesis input
-        synthesis_input = texttospeech.SynthesisInput(text=text)
+        # Resolve model
+        if model_key is None:
+            model_key = DEFAULT_MODEL
+        model_def = TTS_MODELS.get(model_key, TTS_MODELS[DEFAULT_MODEL])
         
-        # Configure voice
-        voice = texttospeech.VoiceSelectionParams(
-            language_code=language_code,
-            name=voice_name
-        )
+        # Default voice for this model if not specified
+        if voice_name is None:
+            voice_name = model_def["default_voice"]
+        
+        # Set up synthesis input — with optional prompt for Gemini models
+        input_params = {"text": text}
+        if prompt and model_def["model_name"]:
+            # Gemini models support a prompt field for style control
+            input_params["prompt"] = prompt
+        synthesis_input = texttospeech.SynthesisInput(**input_params)
+        
+        # Configure voice — with or without model_name
+        voice_params = {
+            "language_code": language_code,
+            "name": voice_name,
+        }
+        
+        # Add model parameter for Gemini models
+        if model_def["model_name"]:
+            voice_params["model_name"] = model_def["model_name"]
+        
+        voice = texttospeech.VoiceSelectionParams(**voice_params)
         
         # Configure audio output
-        audio_config = texttospeech.AudioConfig(
-            audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-            sample_rate_hertz=sample_rate,
-            speaking_rate=speaking_rate,
-            pitch=pitch,
-            volume_gain_db=volume_gain_db
-        )
+        audio_config_params = {
+            "audio_encoding": texttospeech.AudioEncoding.LINEAR16,
+            "sample_rate_hertz": sample_rate,
+        }
+        
+        # Only add SSML parameters for models that support them (Chirp3 HD)
+        if model_def["supports_ssml_params"]:
+            audio_config_params["speaking_rate"] = speaking_rate
+            audio_config_params["pitch"] = pitch
+            audio_config_params["volume_gain_db"] = volume_gain_db
+        
+        audio_config = texttospeech.AudioConfig(**audio_config_params)
         
         # Make the API request
-        print(f"🔊 Generating audio for: {text[:50]}... (Rate: {speaking_rate}, Pitch: {pitch}, Vol: {volume_gain_db}dB)")
+        model_label = model_def["label"]
+        print(f"🔊 [{model_label}] Generating audio for: {text[:50]}... (Voice: {voice_name})")
+        
         response = client.synthesize_speech(
             input=synthesis_input,
             voice=voice,
@@ -191,16 +310,17 @@ def synthesize_speech(
         
         # Calculate approximate duration (rough estimate)
         file_size = os.path.getsize(output_path)
-        # For 22050Hz, 16-bit mono: ~44100 bytes per second
+        # For LINEAR16: bytes per second = sample_rate * 2 (16-bit = 2 bytes)
         duration_seconds = file_size / (sample_rate * 2)
         
-        print(f"✅ Audio saved: {output_path} ({duration_seconds:.1f}s)")
+        print(f"✅ [{model_label}] Audio saved: {output_path} ({duration_seconds:.1f}s)")
         
         return {
             "success": True,
             "path": output_path,
             "text": text,
             "voice": voice_name,
+            "model": model_key,
             "duration_seconds": round(duration_seconds, 2),
             "file_size_bytes": file_size
         }
@@ -217,7 +337,8 @@ def synthesize_speech(
 def batch_synthesize(
     items: List[Dict],
     output_dir: str = DEFAULT_OUTPUT_DIR,
-    voice_name: str = DEFAULT_VOICE
+    voice_name: str = None,
+    model_key: str = None
 ) -> List[Dict]:
     """
     Generate .wav files for multiple sentences.
@@ -225,7 +346,8 @@ def batch_synthesize(
     Args:
         items: List of dicts with 'text' and optionally 'word' keys
         output_dir: Directory to save .wav files
-        voice_name: Google TTS voice to use
+        voice_name: Voice to use
+        model_key: TTS model key
     
     Returns:
         List of result dicts with file paths and status
@@ -250,7 +372,8 @@ def batch_synthesize(
         result = synthesize_speech(
             text=text,
             output_path=output_path,
-            voice_name=voice_name
+            voice_name=voice_name,
+            model_key=model_key
         )
         
         result["index"] = i
@@ -279,6 +402,3 @@ def generate_training_filename(text: str, output_dir: str = DEFAULT_OUTPUT_DIR) 
     text_part = sanitize_filename(text)
     filename = f"train_{timestamp}_{text_part}.wav"
     return os.path.join(output_dir, filename)
-
-
-

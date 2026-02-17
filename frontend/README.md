@@ -21,10 +21,19 @@ The frontend expects the backend to be running on the same hostname, port `5001`
 
 | Page | File | Description |
 |------|------|-------------|
-| **TTS Client** | `App.jsx` | Main data generator — sentence generation, review, audio synthesis, folder management |
-| **Training** | `pages/TrainingPage.jsx` | XTTS v2 fine-tuning — folder selection, hyperparameters, live training console |
-| **Models** | `pages/ModelsPage.jsx` | Model registry — browse trained models, run inference, test and compare |
-| **Settings** | `pages/SettingsPage.jsx` | API keys, LLM provider, TTS provider (Google Cloud / Gemini), voice parameters |
+| **Veri Üretimi** (TTS Client) | `App.jsx` | Main data generator — sentence generation, review, audio synthesis, folder management with search |
+| **Eğitim** (Training) | `pages/TrainingPage.jsx` | XTTS v2 fine-tuning — folder selection, hyperparameters, live training console |
+| **Modeller** (Models) | `pages/ModelsPage.jsx` | Model registry — browse, filter (completed/training/failed/cancelled), test inference, set default base model |
+| **Ayarlar** (Settings) | `pages/SettingsPage.jsx` | API key management, LLM provider, TTS model selection, voice parameters |
+
+## Key Features
+
+- **Optimistic UI updates** — instant feedback for provider/model switching
+- **Folder search** — filter word folders by name
+- **TTS prompt control** — natural language prompts for Gemini model speech style
+- **Model status filters** — Completed, Training, Failed, Cancelled
+- **Default base model** — star a model to use as training baseline
+- **Error reporting** — report mispronunciations for re-generation
 
 ## Project Structure
 

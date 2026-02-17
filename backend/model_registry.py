@@ -248,5 +248,48 @@ def _row_to_dict(row) -> Dict:
     return d
 
 
+def init_settings_table():
+    """Initialize the settings table."""
+    with _db_lock:
+        with get_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT DEFAULT ''
+                )
+            """)
+
+
+def get_default_base_model() -> Optional[Dict]:
+    """Get the default base model for training."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = 'default_base_model_id'"
+        ).fetchone()
+        if not row or not row[0]:
+            return {"model_id": None, "model_name": "xtts_v2"}
+        model_id = int(row[0])
+        model = get_model(model_id)
+        if model:
+            return {"model_id": model_id, "model_name": model["name"]}
+        return {"model_id": None, "model_name": "xtts_v2"}
+
+
+def set_default_base_model(model_id: Optional[int]) -> Dict:
+    """Set the default base model for training. Pass None to reset to xtts_v2."""
+    if model_id is not None:
+        model = get_model(model_id)
+        if not model:
+            raise ValueError(f"Model {model_id} not found")
+    with _db_lock:
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('default_base_model_id', ?)",
+                (str(model_id) if model_id else "",)
+            )
+    return get_default_base_model()
+
+
 # Initialize on import
 init_model_registry()
+init_settings_table()

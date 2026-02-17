@@ -57,7 +57,7 @@ GEMINI_SAMPLE_WIDTH = 2
 GEMINI_CHANNELS = 1
 
 # Rate limiting: free tier allows 3 requests per minute
-RATE_LIMIT_DELAY = 22  # seconds between requests (60s / 3 = 20s + buffer)
+RATE_LIMIT_DELAY = 7  # seconds between requests
 MAX_RETRIES = 3
 
 # Global client

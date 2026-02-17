@@ -4,12 +4,12 @@ import { GraduationCap, Play, Square, AlertCircle, Check, Settings, Folder, Volu
 const API_BASE_URL = `http://${window.location.hostname}:5001`
 
 function TrainingPage() {
-    // Form state
-    const [name, setName] = useState('')
-    const [description, setDescription] = useState('')
-    const [tags, setTags] = useState('')
-    const [datasetPath, setDatasetPath] = useState('')
-    const [metaFile, setMetaFile] = useState('metadata.csv')
+    // Form state — persisted in localStorage
+    const [name, setName] = useState(() => localStorage.getItem('training_name') || '')
+    const [description, setDescription] = useState(() => localStorage.getItem('training_description') || '')
+    const [tags, setTags] = useState(() => localStorage.getItem('training_tags') || '')
+    const [datasetPath, setDatasetPath] = useState(() => localStorage.getItem('training_datasetPath') || '')
+    const [metaFile, setMetaFile] = useState(() => localStorage.getItem('training_metaFile') || 'metadata.csv')
 
     // Dataset selection
     const [folders, setFolders] = useState([])
@@ -19,24 +19,26 @@ function TrainingPage() {
     const [playingId, setPlayingId] = useState(null)
     const audioRef = useRef(null)
 
-    // Training params
-    const [epochs, setEpochs] = useState(40)
-    const [batchSize, setBatchSize] = useState(1)
-    const [gradAccumSteps, setGradAccumSteps] = useState(10)
-    const [learningRate, setLearningRate] = useState('5e-06')
-    const [saveStep, setSaveStep] = useState(30)
+    // Training params — persisted in localStorage
+    const [epochs, setEpochs] = useState(() => parseInt(localStorage.getItem('training_epochs')) || 40)
+    const [batchSize, setBatchSize] = useState(() => parseInt(localStorage.getItem('training_batchSize')) || 1)
+    const [gradAccumSteps, setGradAccumSteps] = useState(() => parseInt(localStorage.getItem('training_gradAccumSteps')) || 10)
+    const [learningRate, setLearningRate] = useState(() => localStorage.getItem('training_learningRate') || '5e-06')
+    const [saveStep, setSaveStep] = useState(() => parseInt(localStorage.getItem('training_saveStep')) || 30)
     const [numSamples, setNumSamples] = useState(0)
-    const [language, setLanguage] = useState('tr')
-    const [speakerRef, setSpeakerRef] = useState('')
+    const [language, setLanguage] = useState(() => localStorage.getItem('training_language') || 'tr')
+    const [speakerRef, setSpeakerRef] = useState(() => localStorage.getItem('training_speakerRef') || '')
+
+    // Base model selection
+    const [baseModelId, setBaseModelId] = useState(null) // null = xtts_v2 base
+    const [completedModels, setCompletedModels] = useState([])
+    const [defaultBaseModel, setDefaultBaseModel] = useState(null)
 
     // Training status
     const [activeModelId, setActiveModelId] = useState(null)
     const [trainingStatus, setTrainingStatus] = useState(null)
     const [trainingLog, setTrainingLog] = useState('')
     const [isStarting, setIsStarting] = useState(false)
-
-    // History
-    const [trainingHistory, setTrainingHistory] = useState([])
 
     // Messages
     const [error, setError] = useState(null)
@@ -46,8 +48,9 @@ function TrainingPage() {
     const logRef = useRef(null)
 
     useEffect(() => {
-        loadHistory()
         loadFolders()
+        loadCompletedModels()
+        loadDefaultBaseModel()
 
         // Restore active training state if a job is running (e.g. after navigating away and back)
         const checkActiveJobs = async () => {
@@ -77,6 +80,20 @@ function TrainingPage() {
         checkActiveJobs()
     }, [])
 
+    // Persist form state to localStorage on change
+    useEffect(() => { localStorage.setItem('training_name', name) }, [name])
+    useEffect(() => { localStorage.setItem('training_description', description) }, [description])
+    useEffect(() => { localStorage.setItem('training_tags', tags) }, [tags])
+    useEffect(() => { localStorage.setItem('training_datasetPath', datasetPath) }, [datasetPath])
+    useEffect(() => { localStorage.setItem('training_metaFile', metaFile) }, [metaFile])
+    useEffect(() => { localStorage.setItem('training_epochs', epochs.toString()) }, [epochs])
+    useEffect(() => { localStorage.setItem('training_batchSize', batchSize.toString()) }, [batchSize])
+    useEffect(() => { localStorage.setItem('training_gradAccumSteps', gradAccumSteps.toString()) }, [gradAccumSteps])
+    useEffect(() => { localStorage.setItem('training_learningRate', learningRate) }, [learningRate])
+    useEffect(() => { localStorage.setItem('training_saveStep', saveStep.toString()) }, [saveStep])
+    useEffect(() => { localStorage.setItem('training_language', language) }, [language])
+    useEffect(() => { localStorage.setItem('training_speakerRef', speakerRef) }, [speakerRef])
+
     // Poll training status when active
     useEffect(() => {
         if (!activeModelId) return
@@ -91,7 +108,6 @@ function TrainingPage() {
                     if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
                         clearInterval(interval)
                         setActiveModelId(null)
-                        loadHistory()
                         if (data.status === 'completed') setSuccess('🎉 Eğitim tamamlandı!')
                         if (data.status === 'failed') setError('❌ Eğitim başarısız: ' + (data.error_message || ''))
                     }
@@ -135,6 +151,29 @@ function TrainingPage() {
             if (data.success) setFolders(data.folders || [])
         } catch (err) {
             console.error('Folders yüklenemedi:', err)
+        }
+    }
+
+    const loadCompletedModels = async () => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/models?status=completed`)
+            const data = await response.json()
+            if (data.success) setCompletedModels(data.models || [])
+        } catch (err) {
+            console.error('Completed models yüklenemedi:', err)
+        }
+    }
+
+    const loadDefaultBaseModel = async () => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/settings/default-base-model`)
+            const data = await response.json()
+            if (data.success) {
+                setDefaultBaseModel(data.model_id)
+                setBaseModelId(data.model_id)
+            }
+        } catch (err) {
+            console.error('Default base model yüklenemedi:', err)
         }
     }
 
@@ -197,16 +236,6 @@ function TrainingPage() {
         audio.play().catch(() => { setError('Ses oynatılamadı'); setPlayingId(null) })
     }
 
-    const loadHistory = async () => {
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/models`)
-            const data = await response.json()
-            if (data.success) setTrainingHistory(data.models)
-        } catch (err) {
-            console.error('History yüklenemedi:', err)
-        }
-    }
-
     const startTraining = async () => {
         if (!name.trim()) { setError('Model adı gerekli'); return }
         if (selectedFolders.size === 0 && !datasetPath.trim()) {
@@ -238,7 +267,8 @@ function TrainingPage() {
                         save_step: parseInt(saveStep),
                         num_samples: parseInt(numSamples) || 1,
                         language,
-                        speaker_reference: speakerRef || undefined
+                        speaker_reference: speakerRef || undefined,
+                        base_model_id: baseModelId || undefined
                     }
                 })
             })
@@ -280,6 +310,12 @@ function TrainingPage() {
 
     const isTraining = !!activeModelId || trainingStatus === 'training' || trainingStatus === 'starting'
 
+    const getBaseModelLabel = () => {
+        if (!baseModelId) return 'XTTS v2 (Varsayılan Temel Model)'
+        const m = completedModels.find(x => x.id === baseModelId)
+        return m ? m.name : 'Bilinmeyen model'
+    }
+
     return (
         <div className="page-content">
             {/* Notifications */}
@@ -317,6 +353,40 @@ function TrainingPage() {
                             <div className="form-group">
                                 <label>Etiketler (virgülle ayırın)</label>
                                 <input type="text" value={tags} onChange={e => setTags(e.target.value)} placeholder="turkish, pronunciation, v2" disabled={isTraining} />
+                            </div>
+                        </div>
+
+                        {/* Base Model Selection */}
+                        <div className="form-section">
+                            <h4>🧠 Temel Model Seçimi</h4>
+                            <div className="form-group">
+                                <label>Eğitim Temel Modeli</label>
+                                <select
+                                    value={baseModelId || ''}
+                                    onChange={e => setBaseModelId(e.target.value ? parseInt(e.target.value) : null)}
+                                    disabled={isTraining}
+                                >
+                                    <option value="">XTTS v2 (Orijinal Temel Model)</option>
+                                    {completedModels.map(m => (
+                                        <option key={m.id} value={m.id}>
+                                            {m.name} {defaultBaseModel === m.id ? '⭐ (Varsayılan)' : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                                {baseModelId && (
+                                    <span className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.25rem', display: 'block' }}>
+                                        Seçili: {getBaseModelLabel()}
+                                    </span>
+                                )}
+                                {defaultBaseModel && baseModelId !== defaultBaseModel && (
+                                    <button
+                                        className="btn btn-small btn-ghost"
+                                        style={{ marginTop: '0.5rem', fontSize: '0.75rem' }}
+                                        onClick={() => setBaseModelId(defaultBaseModel)}
+                                    >
+                                        ⭐ Varsayılana Dön
+                                    </button>
+                                )}
                             </div>
                         </div>
 
@@ -531,48 +601,6 @@ function TrainingPage() {
                                 </div>
                             )}
                         </div>
-                    </div>
-
-                    {/* Training History */}
-                    <div className="card" style={{ marginTop: '1rem' }}>
-                        <h3 className="card-title">📜 Eğitim Geçmişi</h3>
-                        {trainingHistory.length === 0 ? (
-                            <p className="text-muted">Henüz eğitim kaydı yok.</p>
-                        ) : (
-                            <div className="history-table-wrapper">
-                                <table className="history-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Model</th>
-                                            <th>Durum</th>
-                                            <th>Epoch</th>
-                                            <th>Tarih</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {trainingHistory.slice(0, 10).map(m => (
-                                            <tr key={m.id}>
-                                                <td>
-                                                    <strong>{m.name}</strong>
-                                                    {(m.tags || []).length > 0 && (
-                                                        <div className="mini-tags">
-                                                            {m.tags.map((t, i) => <span key={i} className="mini-tag">{t}</span>)}
-                                                        </div>
-                                                    )}
-                                                </td>
-                                                <td>
-                                                    <span className={`status-badge status-${m.status}`}>
-                                                        {m.status === 'completed' ? '✅' : m.status === 'training' ? '⏳' : m.status === 'failed' ? '❌' : '⏸️'} {m.status}
-                                                    </span>
-                                                </td>
-                                                <td>{m.training_params?.epochs || '-'}</td>
-                                                <td>{new Date(m.created_at + (m.created_at?.endsWith('Z') ? '' : 'Z')).toLocaleDateString('tr-TR')}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
                     </div>
                 </div>
             </div>

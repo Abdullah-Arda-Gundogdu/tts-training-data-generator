@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Volume2, Trash2, Tag, Search, Plus, AlertCircle, Check, Clock, XCircle, Brain, X, Mic, Loader, Pause } from 'lucide-react'
+import { Volume2, Trash2, Tag, Search, Plus, AlertCircle, Check, Clock, XCircle, Brain, X, Mic, Loader, Pause, Star, FileText } from 'lucide-react'
 
 const API_BASE_URL = `http://${window.location.hostname}:5001`
 
@@ -11,6 +11,9 @@ function ModelsPage() {
     const [error, setError] = useState(null)
     const [success, setSuccess] = useState(null)
     const audioRef = useRef(null)
+
+    // Default base model
+    const [defaultBaseModelId, setDefaultBaseModelId] = useState(null)
 
     // Manual model add dialog
     const [showAddDialog, setShowAddDialog] = useState(false)
@@ -25,8 +28,18 @@ function ModelsPage() {
     const [testPlayingId, setTestPlayingId] = useState(null)
     const testAudioRef = useRef(null)
 
+    // Delete confirmation modal
+    const [deleteTarget, setDeleteTarget] = useState(null)
+
+    // Console log modal
+    const [logModelId, setLogModelId] = useState(null)
+    const [logModelName, setLogModelName] = useState('')
+    const [logContent, setLogContent] = useState('')
+    const [logLoading, setLogLoading] = useState(false)
+
     useEffect(() => {
         loadModels()
+        loadDefaultBaseModel()
         const interval = setInterval(loadModels, 10000)
         return () => clearInterval(interval)
     }, [])
@@ -55,18 +68,88 @@ function ModelsPage() {
         }
     }
 
-    const deleteModel = async (id) => {
-        if (!confirm('Bu modeli silmek istediğinize emin misiniz?')) return
+    const loadDefaultBaseModel = async () => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/settings/default-base-model`)
+            const data = await response.json()
+            if (data.success) setDefaultBaseModelId(data.model_id)
+        } catch (err) {
+            console.error('Default base model yüklenemedi:', err)
+        }
+    }
+
+    // --- Delete with confirmation ---
+    const requestDelete = (model) => {
+        setDeleteTarget(model)
+    }
+
+    const confirmDelete = async () => {
+        if (!deleteTarget) return
+        const id = deleteTarget.id
         try {
             const response = await fetch(`${API_BASE_URL}/api/models/${id}`, { method: 'DELETE' })
             if (response.ok) {
                 setSuccess('✅ Model silindi')
                 if (testModelId === id) closeTestPanel()
+                if (defaultBaseModelId === id) {
+                    setDefaultBaseModelId(null)
+                }
                 loadModels()
             }
         } catch (err) {
             setError('Model silinemedi: ' + err.message)
         }
+        setDeleteTarget(null)
+    }
+
+    const cancelDelete = () => {
+        setDeleteTarget(null)
+    }
+
+    // --- Set as default ---
+    const setAsDefault = async (modelId) => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/settings/default-base-model`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model_id: modelId })
+            })
+            const data = await response.json()
+            if (data.success) {
+                setDefaultBaseModelId(data.model_id)
+                setSuccess('⭐ Varsayılan temel model güncellendi')
+            } else {
+                setError(data.error || 'Güncelleme başarısız')
+            }
+        } catch (err) {
+            setError('Varsayılan model ayarlanamadı: ' + err.message)
+        }
+    }
+
+    // --- Console log ---
+    const openLog = async (model) => {
+        setLogModelId(model.id)
+        setLogModelName(model.name)
+        setLogContent('')
+        setLogLoading(true)
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/models/${model.id}/training-log`)
+            const data = await response.json()
+            if (data.success) {
+                setLogContent(data.log || '(Konsol kaydı bulunamadı)')
+            } else {
+                setLogContent('Hata: ' + (data.error || 'Bilinmeyen hata'))
+            }
+        } catch (err) {
+            setLogContent('Hata: ' + err.message)
+        } finally {
+            setLogLoading(false)
+        }
+    }
+
+    const closeLog = () => {
+        setLogModelId(null)
+        setLogContent('')
     }
 
     const addManualModel = async () => {
@@ -173,6 +256,7 @@ function ModelsPage() {
             case 'completed': return <Check size={14} />
             case 'training': return <Clock size={14} />
             case 'failed': return <XCircle size={14} />
+            case 'cancelled': return <Pause size={14} />
             default: return <Clock size={14} />
         }
     }
@@ -182,8 +266,21 @@ function ModelsPage() {
             case 'completed': return 'status-badge status-completed'
             case 'training': return 'status-badge status-training'
             case 'failed': return 'status-badge status-failed'
+            case 'cancelled': return 'status-badge status-cancelled'
             default: return 'status-badge status-pending'
         }
+    }
+
+    const formatDate = (dateStr) => {
+        if (!dateStr) return '-'
+        const d = new Date(dateStr + (dateStr.endsWith('Z') ? '' : 'Z'))
+        return d.toLocaleString('tr-TR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        })
     }
 
     const filteredModels = models.filter(m => {
@@ -230,13 +327,13 @@ function ModelsPage() {
                         />
                     </div>
                     <div className="filter-buttons">
-                        {['all', 'completed', 'training', 'failed'].map(s => (
+                        {['all', 'completed', 'training', 'failed', 'cancelled'].map(s => (
                             <button
                                 key={s}
                                 className={`btn btn-small ${filterStatus === s ? 'btn-primary' : 'btn-ghost'}`}
                                 onClick={() => setFilterStatus(s)}
                             >
-                                {s === 'all' ? 'Tümü' : s === 'completed' ? '✅ Tamamlanan' : s === 'training' ? '🟡 Eğitimde' : '🔴 Başarısız'}
+                                {s === 'all' ? 'Tümü' : s === 'completed' ? '✅ Tamamlanan' : s === 'training' ? '🟡 Eğitimde' : s === 'failed' ? '🔴 Başarısız' : '🟠 İptal Edildi'}
                             </button>
                         ))}
                     </div>
@@ -325,7 +422,7 @@ function ModelsPage() {
                 </div>
             )}
 
-            {/* Model Grid */}
+            {/* Model List (horizontal rows) */}
             {filteredModels.length === 0 ? (
                 <div className="empty-state">
                     <Brain size={48} style={{ opacity: 0.3 }} />
@@ -333,65 +430,77 @@ function ModelsPage() {
                     <p>Eğitim sayfasından yeni bir model eğitin veya manuel olarak ekleyin.</p>
                 </div>
             ) : (
-                <div className="model-grid">
+                <div className="model-list">
                     {filteredModels.map(model => (
-                        <div key={model.id} className={`model-card ${testModelId === model.id ? 'model-card-active' : ''}`}>
-                            <div className="model-card-header">
-                                <h3>{model.name}</h3>
-                                <span className={getStatusClass(model.status)}>
-                                    {getStatusIcon(model.status)}
-                                    {model.status === 'completed' ? 'Tamamlandı' : model.status === 'training' ? 'Eğitimde' : model.status === 'failed' ? 'Başarısız' : model.status === 'cancelled' ? 'İptal Edildi' : 'Bekliyor'}
-                                </span>
-                            </div>
-
-                            {model.description && (
-                                <p className="model-description">{model.description}</p>
-                            )}
-
-                            {/* Tags */}
-                            {(model.tags || []).length > 0 && (
-                                <div className="model-tags">
-                                    {model.tags.map((tag, i) => (
-                                        <span key={i} className="tag-badge">
-                                            <Tag size={10} /> {tag}
-                                        </span>
-                                    ))}
+                        <div key={model.id} className={`model-row ${testModelId === model.id ? 'model-row-active' : ''} ${defaultBaseModelId === model.id ? 'model-row-default' : ''}`}>
+                            <div className="model-row-info">
+                                <div className="model-row-top">
+                                    <h3 className="model-row-name">
+                                        {defaultBaseModelId === model.id && <Star size={14} className="default-star" />}
+                                        {model.name}
+                                    </h3>
+                                    <span className={getStatusClass(model.status)}>
+                                        {getStatusIcon(model.status)}
+                                        {model.status === 'completed' ? 'Tamamlandı' : model.status === 'training' ? 'Eğitimde' : model.status === 'failed' ? 'Başarısız' : model.status === 'cancelled' ? 'İptal Edildi' : 'Bekliyor'}
+                                    </span>
                                 </div>
-                            )}
-
-                            {/* Training params */}
-                            {model.training_params && Object.keys(model.training_params).length > 0 && (
-                                <div className="model-params">
-                                    {model.training_params.epochs && <span className="param-chip">Epoch: {model.training_params.epochs}</span>}
-                                    {model.training_params.learning_rate && <span className="param-chip">LR: {model.training_params.learning_rate}</span>}
-                                    {model.training_params.batch_size && <span className="param-chip">Batch: {model.training_params.batch_size}</span>}
+                                {model.description && (
+                                    <p className="model-row-desc">{model.description}</p>
+                                )}
+                                <div className="model-row-meta">
+                                    <span className="model-row-date">📅 {formatDate(model.created_at)}</span>
+                                    {model.base_model && <span className="model-row-base">Temel: {model.base_model}</span>}
+                                    {(model.tags || []).length > 0 && (
+                                        <div className="model-row-tags">
+                                            {model.tags.map((tag, i) => (
+                                                <span key={i} className="tag-badge-sm">
+                                                    <Tag size={9} /> {tag}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {model.training_params && model.training_params.epochs && (
+                                        <span className="param-chip-sm">Epoch: {model.training_params.epochs}</span>
+                                    )}
+                                    {model.training_params && model.training_params.learning_rate && (
+                                        <span className="param-chip-sm">LR: {model.training_params.learning_rate}</span>
+                                    )}
                                 </div>
-                            )}
-
-                            {/* Meta info */}
-                            <div className="model-meta">
-                                <span>Oluşturulma: {new Date(model.created_at + (model.created_at?.endsWith('Z') ? '' : 'Z')).toLocaleDateString('tr-TR')}</span>
-                                {model.base_model && <span>Temel: {model.base_model}</span>}
                             </div>
-
-                            {/* Actions */}
-                            <div className="model-actions">
+                            <div className="model-row-actions">
                                 {model.status === 'completed' && (
                                     <button
                                         className={`btn btn-small ${testModelId === model.id ? 'btn-primary' : 'btn-success-small'}`}
                                         onClick={() => testModelId === model.id ? closeTestPanel() : openTestPanel(model.id)}
                                         title="Model ile konuşma sentezi"
                                     >
-                                        <Mic size={16} />
-                                        {testModelId === model.id ? 'Testi Kapat' : 'Test Et'}
+                                        <Mic size={14} />
+                                        {testModelId === model.id ? 'Kapat' : 'Test Et'}
+                                    </button>
+                                )}
+                                <button
+                                    className="btn btn-small btn-ghost"
+                                    onClick={() => openLog(model)}
+                                    title="Eğitim konsol kaydını görüntüle"
+                                >
+                                    <FileText size={14} /> Log
+                                </button>
+                                {model.status === 'completed' && (
+                                    <button
+                                        className={`btn btn-small ${defaultBaseModelId === model.id ? 'btn-default-active' : 'btn-ghost'}`}
+                                        onClick={() => setAsDefault(defaultBaseModelId === model.id ? null : model.id)}
+                                        title={defaultBaseModelId === model.id ? 'Varsayılanı kaldır' : 'Varsayılan olarak ayarla'}
+                                    >
+                                        <Star size={14} />
+                                        {defaultBaseModelId === model.id ? 'Varsayılan' : 'Varsayılan Yap'}
                                     </button>
                                 )}
                                 <button
                                     className="btn btn-small btn-danger-small"
-                                    onClick={() => deleteModel(model.id)}
+                                    onClick={() => requestDelete(model)}
                                     title="Modeli sil"
                                 >
-                                    <Trash2 size={16} /> Sil
+                                    <Trash2 size={14} /> Sil
                                 </button>
                             </div>
                         </div>
@@ -449,6 +558,55 @@ function ModelsPage() {
                         <div className="modal-footer">
                             <button className="btn btn-ghost" onClick={() => setShowAddDialog(false)}>İptal</button>
                             <button className="btn btn-primary" onClick={addManualModel}>Ekle</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {deleteTarget && (
+                <div className="modal-overlay" onClick={cancelDelete}>
+                    <div className="modal-content modal-confirm" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header" style={{ borderBottom: 'none', paddingBottom: 0 }}>
+                            <h3>⚠️ Model Silme Onayı</h3>
+                        </div>
+                        <div className="modal-body" style={{ textAlign: 'center' }}>
+                            <p style={{ fontSize: '0.95rem', marginBottom: '0.5rem' }}>
+                                <strong>"{deleteTarget.name}"</strong> modelini silmek istediğinize emin misiniz?
+                            </p>
+                            <p className="text-muted" style={{ fontSize: '0.8rem' }}>
+                                Bu işlem geri alınamaz. Model dosyaları da silinecektir.
+                            </p>
+                        </div>
+                        <div className="modal-footer" style={{ justifyContent: 'center', gap: '1rem' }}>
+                            <button className="btn btn-ghost" onClick={cancelDelete}>İptal</button>
+                            <button className="btn btn-danger" onClick={confirmDelete}>
+                                <Trash2 size={16} /> Sil
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Console Log Modal */}
+            {logModelId && (
+                <div className="modal-overlay" onClick={closeLog}>
+                    <div className="modal-content modal-log" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3>📋 Konsol Kaydı — {logModelName}</h3>
+                            <button className="btn btn-ghost" onClick={closeLog}><X size={20} /></button>
+                        </div>
+                        <div className="modal-body" style={{ padding: 0 }}>
+                            <div className="log-modal-content">
+                                {logLoading ? (
+                                    <div className="log-empty">
+                                        <Loader size={24} className="spin" />
+                                        <p style={{ marginTop: '0.5rem' }}>Yükleniyor...</p>
+                                    </div>
+                                ) : (
+                                    <pre>{logContent}</pre>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
