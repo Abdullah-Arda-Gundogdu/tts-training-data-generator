@@ -1,4 +1,4 @@
-<![CDATA[<div align="center">
+<div align="center">
 
 # 🎙️ TTS Training Data Generator
 
@@ -267,4 +267,4 @@ Contributions are welcome! Feel free to open issues or submit pull requests.
 ## 📜 License
 
 This project is open-source and available under the [MIT License](LICENSE).
-]]>
+
