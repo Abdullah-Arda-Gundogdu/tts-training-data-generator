@@ -53,8 +53,8 @@ def _build_dataset_from_folders(
     
     For each selected folder:
       - Query the database for items in that folder (word == folder name)
-      - Copy WAV files to dest_dir/wavs/
-      - Generate metadata.csv in LJSpeech format: filename|text|text
+      - Copy WAV files to dest_dir/wavs/ with clip_NNNN naming
+      - Generate metadata.csv in LJSpeech format: clip_NNNN|text|text
     
     Returns:
         (dataset_path, meta_filename, num_samples)
@@ -67,6 +67,7 @@ def _build_dataset_from_folders(
     metadata_lines = []
     total_copied = 0
     skipped = 0
+    clip_counter = 1
     
     for folder_name in selected_folders:
         log_callback(f"📁 Processing folder: {folder_name}\n")
@@ -82,13 +83,15 @@ def _build_dataset_from_folders(
                 log_callback(f"  ⚠️ No DB items found, but found {len(wav_files)} WAV files in folder\n")
                 for wav_file in wav_files:
                     src = os.path.join(folder_path, wav_file)
-                    dst = os.path.join(wavs_dir, wav_file)
+                    clip_name = f"clip_{clip_counter:04d}"
+                    dst = os.path.join(wavs_dir, f"{clip_name}.wav")
                     if not os.path.isfile(dst):
                         shutil.copy2(src, dst)
                     # Use filename as text placeholder since we have no sentence
                     basename = os.path.splitext(wav_file)[0]
-                    metadata_lines.append(f"wavs/{wav_file}|{basename}|{basename}")
+                    metadata_lines.append(f"{clip_name}|{basename}|{basename}")
                     total_copied += 1
+                    clip_counter += 1
             else:
                 log_callback(f"  ⚠️ Folder not found: {folder_path}\n")
             continue
@@ -98,6 +101,7 @@ def _build_dataset_from_folders(
         for item in items:
             wav_path = item.get("wav_path", "")
             sentence = item.get("sentence", "")
+            spoken = item.get("spoken_text") or sentence  # Use spoken form if available
             
             if not wav_path or not sentence:
                 skipped += 1
@@ -112,18 +116,16 @@ def _build_dataset_from_folders(
                 skipped += 1
                 continue
             
-            # Copy WAV to dataset wavs/ directory
-            wav_filename = os.path.basename(wav_path)
-            dst = os.path.join(wavs_dir, wav_filename)
+            # Copy WAV to dataset wavs/ directory with clip_NNNN naming
+            clip_name = f"clip_{clip_counter:04d}"
+            dst = os.path.join(wavs_dir, f"{clip_name}.wav")
             if not os.path.isfile(dst):
                 shutil.copy2(wav_path, dst)
             
-            # LJSpeech format: stem|text|text
-            # The ljspeech formatter adds "wavs/" prefix and ".wav" suffix automatically,
-            # so we only store the filename stem (without extension or directory).
-            wav_stem = os.path.splitext(wav_filename)[0]
-            metadata_lines.append(f"{wav_stem}|{sentence}|{sentence}")
+            # LJSpeech format: clip_NNNN|raw_text|spoken_text
+            metadata_lines.append(f"{clip_name}|{sentence}|{spoken}")
             total_copied += 1
+            clip_counter += 1
     
     # Write metadata.csv
     meta_filename = "metadata.csv"
@@ -407,8 +409,9 @@ def _training_worker(
             
             # Auto-cleanup: remove training run directory to free disk space
             # Only if model files were successfully copied to models/ dir
-            if (os.path.isfile(model_path) and 
-                os.path.isfile(os.path.join(model_dir, "vocab.json"))):
+            if (model_path and os.path.isfile(model_path) and 
+                os.path.isfile(os.path.join(model_dir, "vocab.json")) and
+                (not config_path or os.path.isfile(config_path))):
                 try:
                     shutil.rmtree(run_output_path, ignore_errors=True)
                     log_callback(f"🧹 Cleaned up training run directory: {run_output_path}\n")

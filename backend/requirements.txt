@@ -4,4 +4,6 @@ openai>=1.0.0
 google-cloud-texttospeech>=2.16.0
 python-dotenv>=1.0.0
 requests
+numpy
+scipy
 TTS

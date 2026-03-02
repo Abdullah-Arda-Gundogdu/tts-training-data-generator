@@ -93,53 +93,67 @@ def _get_openai_client():
     return _openai_client
 
 
-def _build_prompt(word: str, count: int, context: str = None, existing_sentences: List[str] = None, language: str = "Turkish"):
+def _build_prompt(word: str, count: int, context: str = None, existing_sentences: List[str] = None, language: str = "Turkish", system_prompt: str = None):
     """Build the prompt for sentence generation."""
-    context_instruction = f"The sentences should be related to {context} domain." if context else ""
+    context_instruction = f"Cümleler {context} alanıyla ilgili olsun." if context else ""
     
     existing_instruction = ""
     if existing_sentences:
         existing_list = "\n".join([f"- {s}" for s in existing_sentences[-20:]])
         existing_instruction = f"""
-IMPORTANT: Do NOT repeat or paraphrase these existing sentences:
+ÖNEMLİ: Aşağıdaki mevcut cümleleri TEKRARLAMA veya benzerini üretme:
 {existing_list}
 """
+
+    user_instruction = ""
+    if system_prompt:
+        user_instruction = f"\nKULLANICI YÖNERGESİ: {system_prompt}\n"
     
-    return f"""You are a {language} language expert creating training sentences for a Text-to-Speech system.
+    return f"""Sen bir Türkçe dil uzmanısın. Bir TTS (Metin-Konuşma) modeli eğitmek için, teknik veya spesifik kelimeleri içeren senkronize Türkçe cümleler üretiyorsun.
 
-Generate exactly {count} natural {language} sentences that include the term "{word}".
+Tam olarak {count} adet anlamlı, açıklayıcı ve doğal Türkçe cümle üret. Her cümle "{word}" ifadesini içermelidir.
 
-CRITICAL REQUIREMENTS:
-- Use the EXACT term "{word}" as written - preserve the EXACT capitalization and spelling
-- The term may be a single word or a phrase - include it as a complete unit
-- Each sentence should be 8-20 words long
-- Use the term "{word}" in different grammatical contexts
-- Sentences should be natural and conversational
-- Suitable for voice synthesis (clear pronunciation contexts)
-- Include the term at different positions in the sentences
-- Vary sentence structures (statements, commands, questions if appropriate)
+KRİTİK KURALLAR:
+- "{word}" ifadesini BİREBİR AYNI şekilde kullan — büyük/küçük harf, tire, numara ve yazılışı koru. Değiştirme.
+- İfade tek kelime veya birden fazla kelime olabilir, bütün olarak kullan.
+- Her cümle 25-30 kelime uzunluğunda olmalıdır.  kısa veya kelime eksikliği olan cümleler ÜRETME.
+- {word} ifadesi eğer bir kısaltma, havacılık, teknik veya mühendislik terimiyse, cümleyi sanki bir kullanım kılavuzundan, eğitim kitabından veya teknik bir prosedürden alınmış mantıklı bir bağlamda kur.
+- Sadece "Şu {word} kelimesi şöyledir" gibi basit, anlamsız cümleler kurma. Kelimenin gerçek hayattaki veya teknik alandaki işlevini yansıtan cümleler kur.
+- "{word}" ifadesini cümlenin SADECE SONUNDA kullan.
+- Cümleler sesli okunmaya uygun ve akıcı olmalıdır.
+- HER KELİME EN AZ 20 KELİME OLMALI
+
 {context_instruction}
 {existing_instruction}
+{user_instruction}
+ZORUNLU: Sadece geçerli bir JSON dizisi döndür. Açıklama, pre-text, markdown (```json gibi) veya başka bir şey YAZMA. Sadece listeyi dön.
 
-IMPORTANT: Return ONLY a valid JSON array of strings. No explanations, no markdown, just the JSON array.
-
-Example format:
-["First sentence here.", "Second sentence here.", "Third sentence here."]"""
+Format:
+["Birinci cümle burada.", "İkinci cümle burada.", "Üçüncü cümle burada."]"""
 
 
-def _generate_with_openai(prompt: str, temperature: float = 0.8, max_tokens: int = 2000) -> List[str]:
+def _generate_with_openai(prompt: str, temperature: float = 0.8, max_tokens: int = 2000, is_full_prompt: bool = False) -> List[str]:
     """Generate sentences using OpenAI."""
     client = _get_openai_client()
     
-    response = client.chat.completions.create(
-        model="gpt-4.1",
-        messages=[
+    if is_full_prompt:
+        # Full prompt provided by user — send as system message for max compliance
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": "Yukarıdaki yönergeyi uygula ve cümleleri üret."}
+        ]
+    else:
+        messages = [
             {
                 "role": "system",
-                "content": "You are a helpful assistant that generates training sentences for TTS systems. Always respond with valid JSON arrays only."
+                "content": "Sen bir Türkçe TTS eğitim verisi uzmanısın. Doğal, günlük konuşmaya yakın Türkçe cümleler üretirsin. Sadece geçerli JSON dizisi döndür, başka hiçbir şey yazma."
             },
             {"role": "user", "content": prompt}
-        ],
+        ]
+    
+    response = client.chat.completions.create(
+        model="gpt-4.1",
+        messages=messages,
         temperature=temperature,
         max_tokens=max_tokens
     )
@@ -148,27 +162,41 @@ def _generate_with_openai(prompt: str, temperature: float = 0.8, max_tokens: int
     return _parse_json_response(content)
 
 
-def _generate_with_ollama(prompt: str, temperature: float = 0.8) -> List[str]:
+def _generate_with_ollama(prompt: str, temperature: float = 0.8, is_full_prompt: bool = False) -> List[str]:
     """Generate sentences using Ollama."""
     try:
-        response = requests.post(
-            f"{_ollama_base_url}/api/generate",
-            json={
-                "model": _ollama_model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": temperature
-                }
-            },
-            timeout=120
-        )
+        # For Ollama, full_prompt is sent as system message via /api/chat
+        if is_full_prompt:
+            response = requests.post(
+                f"{_ollama_base_url}/api/chat",
+                json={
+                    "model": _ollama_model,
+                    "messages": [
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": "Yukarıdaki yönergeyi uygula ve cümleleri üret."}
+                    ],
+                    "stream": False,
+                    "options": {"temperature": temperature}
+                },
+                timeout=120
+            )
+        else:
+            response = requests.post(
+                f"{_ollama_base_url}/api/generate",
+                json={
+                    "model": _ollama_model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": temperature}
+                },
+                timeout=120
+            )
         
         if response.status_code != 200:
             raise Exception(f"Ollama API error: {response.status_code}")
         
         data = response.json()
-        content = data.get("response", "").strip()
+        content = data.get("message", {}).get("content", "").strip() if is_full_prompt else data.get("response", "").strip()
         return _parse_json_response(content)
         
     except requests.exceptions.ConnectionError:
@@ -204,7 +232,9 @@ def generate_sentences(
     count: int = 5,
     context: Optional[str] = None,
     language: str = "Turkish",
-    provider: str = None
+    provider: str = None,
+    system_prompt: str = None,
+    full_prompt: str = None
 ) -> List[str]:
     """
     Generate natural sentences containing the specified word.
@@ -215,6 +245,8 @@ def generate_sentences(
         context: Optional context/domain (e.g., "aviation", "technical")
         language: Language for sentences (default: Turkish)
         provider: Override the default provider (openai/ollama)
+        system_prompt: Optional extra instruction appended to default prompt
+        full_prompt: Optional full prompt override (replaces default prompt entirely)
     
     Returns:
         List of generated sentences containing the word
@@ -230,13 +262,25 @@ def generate_sentences(
         remaining = count - len(all_sentences)
         current_batch_size = min(batch_size, remaining)
         
-        prompt = _build_prompt(
-            word=word,
-            count=current_batch_size,
-            context=context,
-            existing_sentences=all_sentences,
-            language=language
-        )
+        use_full = bool(full_prompt)
+        if full_prompt:
+            # Use the full prompt directly, replacing placeholders
+            prompt = full_prompt.replace("{word}", word).replace("{count}", str(current_batch_size))
+            # Append existing sentences dedup instruction if needed
+            if all_sentences:
+                existing_list = "\n".join([f"- {s}" for s in all_sentences[-20:]])
+                prompt += f"\n\nÖNEMLİ: Aşağıdaki mevcut cümleleri TEKRARLAMA veya benzerini üretme:\n{existing_list}"
+            print(f"📝 Using FULL user prompt ({len(prompt)} chars)")
+        else:
+            prompt = _build_prompt(
+                word=word,
+                count=current_batch_size,
+                context=context,
+                existing_sentences=all_sentences,
+                language=language,
+                system_prompt=system_prompt
+            )
+            print(f"📝 Using default _build_prompt ({len(prompt)} chars)")
         
         retries = 0
         batch_sentences = []
@@ -244,9 +288,9 @@ def generate_sentences(
         while retries < max_retries_per_batch and len(batch_sentences) < current_batch_size:
             try:
                 if active_provider == "ollama":
-                    sentences = _generate_with_ollama(prompt)
+                    sentences = _generate_with_ollama(prompt, is_full_prompt=use_full)
                 else:
-                    sentences = _generate_with_openai(prompt)
+                    sentences = _generate_with_openai(prompt, is_full_prompt=use_full)
                 
                 # Validate sentences contain the word
                 word_lower = word.lower()
@@ -294,18 +338,17 @@ def regenerate_single_sentence(
     
     existing_text = "\n".join([f"- {s}" for s in existing_sentences])
     
-    prompt = f"""Generate ONE new {language} sentence containing the term "{word}".
+    prompt = f"""Aşağıdaki kelimeyi/ifadeyi içeren TEK BİR yeni Türkçe cümle üret: "{word}"
 
-CRITICAL: Use the EXACT term "{word}" as written - preserve the EXACT capitalization and spelling.
-The term may be a phrase - include it as a complete unit.
+KRİTİK: "{word}" ifadesini BİREBİR AYNI şekilde kullan.
 
-The sentence should be:
-- 8-20 words long
-- Natural and conversational
-- Different from these existing sentences:
+Cümle şu özelliklerde olsun:
+- 15-25 kelime uzunluğunda (çok kısa olmasın, en az 8 saniye sürecek şekilde)
+- Doğal ve günlük konuşmaya yakın
+- Aşağıdaki mevcut cümlelerden FARKLI:
 {existing_text}
 
-Return ONLY the sentence text, nothing else."""
+Sadece cümle metnini döndür, başka hiçbir şey yazma."""
 
     try:
         if active_provider == "ollama":

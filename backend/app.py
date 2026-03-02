@@ -4,11 +4,15 @@ Training Data Generator - Standalone Backend
 Flask API for generating synthetic training data:
 1. GPT generates sentences containing mispronounced words
 2. Google TTS or Gemini TTS converts sentences to .wav files
-3. Export as metadata.csv for XTTS training
+3. Training pipeline for XTTS model fine-tuning
+4. Model registry and inference
 """
 
-from flask import Flask, request, jsonify, send_file
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from flask import Flask, request, jsonify, send_file, Response
 from flask_cors import CORS
+import json
 import os
 import shutil
 import zipfile
@@ -53,6 +57,7 @@ from model_registry import (
 )
 import training_service
 import inference_service
+import colloquial_normalizer
 
 app = Flask(__name__)
 CORS(app)
@@ -110,6 +115,8 @@ def api_generate_sentences():
         context = data.get('context')
         provider = data.get('provider')  # Optional: 'openai' or 'ollama'
         model = data.get('model')  # Optional: Ollama model name
+        system_prompt = data.get('system_prompt')  # Optional: custom system prompt
+        full_prompt = data.get('full_prompt')  # Optional: full prompt override
         
         # If Ollama provider specified with model, set it before generating
         if provider == 'ollama' and model:
@@ -121,7 +128,9 @@ def api_generate_sentences():
             word=word,
             count=count,
             context=context,
-            provider=provider
+            provider=provider,
+            system_prompt=system_prompt,
+            full_prompt=full_prompt
         )
         
         add_generation_batch(word=word, sentence_count=len(sentences))
@@ -170,9 +179,201 @@ def api_regenerate_sentence():
         return jsonify({"error": f"Failed to regenerate sentence: {str(e)}"}), 500
 
 
+@app.route('/api/batch-process', methods=['POST'])
+def api_batch_process():
+    """Batch process: for each word, generate sentences + audio automatically."""
+    try:
+        data = request.get_json()
+        
+        words = data.get('words', [])
+        sentences_per_word = int(data.get('sentencesPerWord', 15))
+        context = data.get('context', '').strip() or None
+        
+        if not words:
+            return jsonify({"error": "words array is required"}), 400
+        
+        # Get TTS settings
+        model_key = get_tts_model()
+        model_def = google_tts_service.TTS_MODELS.get(model_key, google_tts_service.TTS_MODELS[google_tts_service.DEFAULT_MODEL])
+        voice = data.get('voice', model_def['default_voice'])
+        speaking_rate = float(data.get('speakingRate', 1.0))
+        pitch = float(data.get('pitch', 0.0))
+        volume_gain_db = float(data.get('volumeGainDb', 0.0))
+        tts_prompt = data.get('ttsPrompt', '').strip() or None
+        
+        all_results = []
+        
+        for word_idx, word in enumerate(words):
+            word = word.strip()
+            if not word:
+                continue
+            
+            print(f"\n{'='*50}")
+            print(f"📋 Batch [{word_idx+1}/{len(words)}]: Processing word '{word}' ({sentences_per_word} sentences)")
+            print(f"{'='*50}")
+            
+            # Check existing sentences first to avoid unnecessary LLM calls
+            existing_items = get_training_items(word=word, status="generated")
+            existing_count = len(existing_items)
+            
+            if existing_count >= sentences_per_word:
+                print(f"⏭️ Skipping '{word}': Already has {existing_count} generated audio files.")
+                all_results.append({
+                    "word": word,
+                    "success": True,
+                    "generated": 0,
+                    "skipped": sentences_per_word,
+                    "failed": 0,
+                    "total_sentences": existing_count
+                })
+                continue
+                
+            needed_sentences = sentences_per_word - existing_count
+            if existing_count > 0:
+                print(f"  Found {existing_count} existing items. Generating {needed_sentences} more...")
+            
+            # Step 1: Generate sentences via LLM (with rate limit retry)
+            sentences = []
+            max_attempts = 5
+            for attempt in range(max_attempts):
+                try:
+                    sentences = generate_sentences(
+                        word=word,
+                        count=needed_sentences,
+                        context=context
+                    )
+                    print(f"✅ Generated {len(sentences)} sentences for '{word}'")
+                    
+                    # Adding a base delay after a successful generation prevents hitting TPM/RPM limits too fast
+                    if word_idx < len(words) - 1:
+                        import time
+                        time.sleep(2.5)
+                        
+                    break
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if ('429' in error_str or 'rate limit' in error_str or 'too many' in error_str) and attempt < max_attempts - 1:
+                        # Exponential backoff: 20s, 40s, 80s, 160s
+                        wait = 20 * (2 ** attempt)
+                        print(f"⏳ Rate limited (429). Waiting {wait}s before retry {attempt + 1}/{max_attempts - 1}...")
+                        import time
+                        time.sleep(wait)
+                    elif attempt < max_attempts - 1:
+                        # General transient error backoff: 5s, 10s, 15s...
+                        wait = 5 * (attempt + 1)
+                        print(f"⚠️ Error. Waiting {wait}s before retry {attempt + 1}/{max_attempts - 1}... (Error: {e})")
+                        import time
+                        time.sleep(wait)
+                    else:
+                        print(f"❌ Failed to generate sentences for '{word}' after {max_attempts} attempts: {e}")
+                        all_results.append({
+                            "word": word,
+                            "success": False,
+                            "error": f"Sentence generation failed: {str(e)}",
+                            "generated": 0
+                        })
+                        break
+            
+            if not sentences:
+                continue
+            
+            # Step 2: For each sentence, normalize + generate audio (PARALLEL)
+            def _process_batch_sentence(sentence_text):
+                """Process one sentence: normalize → dedupe → TTS → DB."""
+                spoken_text = None
+                tts_text = sentence_text
+                if colloquial_normalizer.is_enabled():
+                    try:
+                        norm_result = colloquial_normalizer.normalize_to_spoken(sentence_text)
+                        spoken_text = norm_result.get("spoken", sentence_text)
+                        tts_text = spoken_text
+                        if spoken_text != sentence_text:
+                            print(f"  📝 Normalized: '{sentence_text[:40]}...' → '{spoken_text[:40]}...'")
+                    except Exception as e:
+                        print(f"  ⚠️ Normalization failed: {e}")
+                        spoken_text = sentence_text
+                        tts_text = sentence_text
+                
+                existing = check_existing_audio(sentence_text, word)
+                if existing:
+                    print(f"  ⏭️ Skipping duplicate: {sentence_text[:50]}...")
+                    return {"success": True, "skipped": True}
+                
+                safe_word = word.lower().replace('/', '_').replace('\\', '_').replace(':', '_').replace('*', '_').replace('?', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace('|', '_').strip('_')
+                word_folder = os.path.join(TRAINING_OUTPUT_DIR, safe_word) if safe_word else TRAINING_OUTPUT_DIR
+                os.makedirs(word_folder, exist_ok=True)
+                output_path = google_tts_service.generate_training_filename(tts_text, word_folder)
+                
+                result = google_tts_service.synthesize_speech(
+                    text=tts_text,
+                    output_path=output_path,
+                    voice_name=voice,
+                    speaking_rate=speaking_rate,
+                    pitch=pitch,
+                    volume_gain_db=volume_gain_db,
+                    model_key=model_key,
+                    prompt=tts_prompt
+                )
+                
+                if result["success"]:
+                    add_training_item(
+                        word=safe_word or word,
+                        sentence=sentence_text,
+                        spoken_text=spoken_text,
+                        wav_path=result["path"],
+                        voice=voice,
+                        duration_seconds=result.get("duration_seconds"),
+                        status="generated"
+                    )
+                    return {"success": True}
+                else:
+                    return {"success": False, "error": result.get("error")}
+            
+            word_results = []
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = {executor.submit(_process_batch_sentence, s): s for s in sentences}
+                for future in as_completed(futures):
+                    try:
+                        word_results.append(future.result())
+                    except Exception as exc:
+                        print(f"  ❌ Exception: {exc}")
+                        word_results.append({"success": False, "error": str(exc)})
+            
+            successful = sum(1 for r in word_results if r.get("success") and not r.get("skipped"))
+            skipped = sum(1 for r in word_results if r.get("skipped"))
+            failed = sum(1 for r in word_results if not r.get("success"))
+            
+            print(f"📊 Word '{word}': {successful} generated, {skipped} skipped, {failed} failed")
+            
+            all_results.append({
+                "word": word,
+                "success": True,
+                "generated": successful,
+                "skipped": skipped,
+                "failed": failed,
+                "total_sentences": len(sentences)
+            })
+        
+        total_generated = sum(r.get("generated", 0) for r in all_results)
+        
+        return jsonify({
+            "success": True,
+            "results": all_results,
+            "total_words": len(words),
+            "total_generated": total_generated,
+            "message": f"Batch complete: {total_generated} audio files generated from {len(words)} words"
+        })
+        
+    except Exception as e:
+        print(f"❌ Batch processing error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/generate-audio', methods=['POST'])
 def api_generate_audio():
-    """Generate .wav files from sentences using the active TTS provider."""
+    """Generate .wav files from sentences using the active TTS provider (parallel)."""
     try:
         data = request.get_json()
         
@@ -193,43 +394,52 @@ def api_generate_audio():
         volume_gain_db = float(data.get('volumeGainDb', 0.0))
         tts_prompt = data.get('ttsPrompt', '').strip() or None
         
-        results = []
-        
-        for item in sentences:
+        def _process_sentence(item):
+            """Process a single sentence: normalize → duplicate check → synthesize → DB insert."""
             text = item.get('text', '').strip()
             word = item.get('word', '').strip()
             
             if not text:
-                results.append({
-                    "success": False,
-                    "error": "Empty text",
-                    "text": text
-                })
-                continue
+                return {"success": False, "error": "Empty text", "text": text}
+            
+            # Colloquial normalization: convert formal text to spoken form
+            spoken_text = None
+            tts_text = text  # Text to send to TTS
+            if colloquial_normalizer.is_enabled():
+                try:
+                    norm_result = colloquial_normalizer.normalize_to_spoken(text)
+                    spoken_text = norm_result.get("spoken", text)
+                    tts_text = spoken_text  # TTS gets the spoken form
+                    if spoken_text != text:
+                        print(f"📝 Normalized: '{text[:40]}...' → '{spoken_text[:40]}...'")
+                except Exception as e:
+                    print(f"⚠️ Normalization failed, using original: {e}")
+                    spoken_text = text
+                    tts_text = text
             
             # Check for existing audio (duplicate prevention)
             existing = check_existing_audio(text, word)
             if existing:
                 print(f"⏭️ Skipping duplicate: {text[:50]}...")
-                results.append({
+                return {
                     "success": True,
                     "skipped": True,
                     "text": text,
+                    "spoken_text": spoken_text,
                     "id": existing['id'],
                     "path": existing['wav_path'],
                     "play_url": f"/api/audio/{existing['id']}/play",
                     "message": "Already exists"
-                })
-                continue
+                }
             
             # Create word-based subfolder (sanitize word for filesystem safety)
             safe_word = word.lower().replace('/', '_').replace('\\', '_').replace(':', '_').replace('*', '_').replace('?', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace('|', '_').strip('_') if word else ''
             word_folder = os.path.join(TRAINING_OUTPUT_DIR, safe_word) if safe_word else TRAINING_OUTPUT_DIR
             os.makedirs(word_folder, exist_ok=True)
-            output_path = google_tts_service.generate_training_filename(text, word_folder)
+            output_path = google_tts_service.generate_training_filename(tts_text, word_folder)
             
             result = google_tts_service.synthesize_speech(
-                text=text,
+                text=tts_text,
                 output_path=output_path,
                 voice_name=voice,
                 speaking_rate=speaking_rate,
@@ -242,7 +452,8 @@ def api_generate_audio():
             if result["success"]:
                 item_id = add_training_item(
                     word=safe_word or word,
-                    sentence=text,
+                    sentence=text,  # Original formal text
+                    spoken_text=spoken_text,  # Colloquial spoken form
                     wav_path=result["path"],
                     voice=voice,
                     duration_seconds=result.get("duration_seconds"),
@@ -250,10 +461,27 @@ def api_generate_audio():
                 )
                 result["id"] = item_id
                 result["play_url"] = f"/api/audio/{item_id}/play"
+                result["spoken_text"] = spoken_text
             
-            results.append(result)
-            
-            # No rate limit delay needed — Google Cloud TTS has generous quotas
+            return result
+        
+        # Process sentences in parallel (max 10 concurrent API calls)
+        results = [None] * len(sentences)
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_index = {
+                executor.submit(_process_sentence, item): i
+                for i, item in enumerate(sentences)
+            }
+            for future in as_completed(future_to_index):
+                idx = future_to_index[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as exc:
+                    results[idx] = {
+                        "success": False,
+                        "error": str(exc),
+                        "text": sentences[idx].get('text', '')
+                    }
         
         successful = sum(1 for r in results if r.get("success"))
         
@@ -539,7 +767,8 @@ def api_set_tts_config():
             f.write("# Environment variables for Training Data Generator\n")
             f.write("# Updated via Settings UI\n\n")
             for key, value in existing.items():
-                f.write(f"{key}={value}\n")
+                # Quote values to handle special characters in API keys
+                f.write(f'{key}="{value}"\n')
         
         return jsonify({
             "success": True,
@@ -599,6 +828,245 @@ def api_get_ollama_models():
         return jsonify({"error": str(e)}), 500
 
 
+# ============================================================================
+# BATCH TTS FROM FILE (SSE streaming)
+# ============================================================================
+
+@app.route('/api/batch-tts-from-file', methods=['POST'])
+def api_batch_tts_from_file():
+    """Batch TTS: upload a .txt file (one sentence per line) and generate audio for each.
+    Streams progress via Server-Sent Events (SSE)."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
+
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
+
+        # Read all lines from the uploaded text file
+        raw_content = file.read()
+        # Try UTF-8 first, fallback to latin-1
+        try:
+            text_content = raw_content.decode('utf-8-sig')  # handles BOM
+        except UnicodeDecodeError:
+            text_content = raw_content.decode('latin-1')
+
+        all_lines = [line.strip() for line in text_content.splitlines() if line.strip()]
+
+        if not all_lines:
+            return jsonify({"error": "File is empty or has no valid sentences"}), 400
+
+        # Get optional parameters from form data
+        word = request.form.get('word', 'file_import').strip()
+        model_key = get_tts_model()
+        model_def = google_tts_service.TTS_MODELS.get(model_key, google_tts_service.TTS_MODELS[google_tts_service.DEFAULT_MODEL])
+        voice = request.form.get('voice', model_def['default_voice'])
+        speaking_rate = float(request.form.get('speakingRate', 1.0))
+        pitch = float(request.form.get('pitch', 0.0))
+        volume_gain_db = float(request.form.get('volumeGainDb', 0.0))
+        tts_prompt = request.form.get('ttsPrompt', '').strip() or None
+
+        print(f"\n{'='*60}")
+        print(f"📄 Batch TTS from file: {file.filename}")
+        print(f"   {len(all_lines)} sentences, folder='{word}', voice='{voice}', model='{model_key}'")
+        print(f"{'='*60}")
+
+        # Prepare the word folder
+        safe_word = word.lower().replace('/', '_').replace('\\', '_').replace(':', '_').replace('*', '_').replace('?', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace('|', '_').strip('_') if word else 'file_import'
+        word_folder = os.path.join(TRAINING_OUTPUT_DIR, safe_word)
+        os.makedirs(word_folder, exist_ok=True)
+
+        def generate_sse():
+            import time
+            total = len(all_lines)
+            success_count = 0
+            failed_count = 0
+            skipped_count = 0
+
+            # Process in small batches of 5
+            BATCH_SIZE = 5
+
+            for batch_start in range(0, total, BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, total)
+                batch_lines = all_lines[batch_start:batch_end]
+
+                def _process_one(idx, sentence_text):
+                    """Process a single sentence: normalize → dedup → TTS → DB."""
+                    try:
+                        spoken_text = None
+                        tts_text = sentence_text
+
+                        # Colloquial normalization
+                        if colloquial_normalizer.is_enabled():
+                            try:
+                                norm_result = colloquial_normalizer.normalize_to_spoken(sentence_text)
+                                spoken_text = norm_result.get("spoken", sentence_text)
+                                tts_text = spoken_text
+                            except Exception:
+                                spoken_text = sentence_text
+                                tts_text = sentence_text
+
+                        # Duplicate check
+                        existing = check_existing_audio(sentence_text, safe_word)
+                        if existing:
+                            return {"status": "skipped", "idx": idx, "text": sentence_text[:60]}
+
+                        output_path = google_tts_service.generate_training_filename(tts_text, word_folder)
+
+                        # Retry with exponential backoff for rate limits
+                        max_retries = 4
+                        for attempt in range(max_retries + 1):
+                            try:
+                                result = google_tts_service.synthesize_speech(
+                                    text=tts_text,
+                                    output_path=output_path,
+                                    voice_name=voice,
+                                    speaking_rate=speaking_rate,
+                                    pitch=pitch,
+                                    volume_gain_db=volume_gain_db,
+                                    model_key=model_key,
+                                    prompt=tts_prompt
+                                )
+                                break
+                            except Exception as e:
+                                err_str = str(e).lower()
+                                if ('429' in err_str or 'rate limit' in err_str) and attempt < max_retries:
+                                    wait = 10 * (2 ** attempt)
+                                    print(f"⏳ Rate limited. Waiting {wait}s... (attempt {attempt+1})")
+                                    time.sleep(wait)
+                                else:
+                                    raise
+
+                        if result.get("success"):
+                            add_training_item(
+                                word=safe_word,
+                                sentence=sentence_text,
+                                spoken_text=spoken_text,
+                                wav_path=result["path"],
+                                voice=voice,
+                                duration_seconds=result.get("duration_seconds"),
+                                status="generated"
+                            )
+                            return {"status": "success", "idx": idx, "text": sentence_text[:60]}
+                        else:
+                            return {"status": "failed", "idx": idx, "text": sentence_text[:60], "error": result.get("error", "Unknown")}
+                    except Exception as e:
+                        return {"status": "failed", "idx": idx, "text": sentence_text[:60], "error": str(e)}
+
+                # Run this batch in parallel
+                batch_results = [None] * len(batch_lines)
+                with ThreadPoolExecutor(max_workers=BATCH_SIZE) as executor:
+                    future_to_idx = {
+                        executor.submit(_process_one, batch_start + i, line): i
+                        for i, line in enumerate(batch_lines)
+                    }
+                    for future in as_completed(future_to_idx):
+                        local_idx = future_to_idx[future]
+                        try:
+                            batch_results[local_idx] = future.result()
+                        except Exception as exc:
+                            batch_results[local_idx] = {"status": "failed", "idx": batch_start + local_idx, "error": str(exc)}
+
+                # Count results and send progress
+                for r in batch_results:
+                    if r and r["status"] == "success":
+                        success_count += 1
+                    elif r and r["status"] == "skipped":
+                        skipped_count += 1
+                    else:
+                        failed_count += 1
+
+                current = batch_end
+                progress_data = json.dumps({
+                    "type": "progress",
+                    "current": current,
+                    "total": total,
+                    "success": success_count,
+                    "failed": failed_count,
+                    "skipped": skipped_count,
+                    "lastText": batch_lines[-1][:60] if batch_lines else ""
+                })
+                yield f"data: {progress_data}\n\n"
+
+            # Final summary
+            complete_data = json.dumps({
+                "type": "complete",
+                "total": total,
+                "success": success_count,
+                "failed": failed_count,
+                "skipped": skipped_count
+            })
+            yield f"data: {complete_data}\n\n"
+            print(f"\n📊 Batch TTS complete: {success_count} success, {failed_count} failed, {skipped_count} skipped out of {total}")
+
+        return Response(generate_sse(), mimetype='text/event-stream', headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive'
+        })
+
+    except Exception as e:
+        print(f"❌ Batch TTS from file error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================================
+# COLLOQUIAL NORMALIZATION API
+# ============================================================================
+
+@app.route('/api/colloquial/settings', methods=['GET'])
+def api_get_colloquial_settings():
+    """Get colloquial normalization settings."""
+    return jsonify({
+        "success": True,
+        "settings": colloquial_normalizer.get_settings()
+    })
+
+
+@app.route('/api/colloquial/settings', methods=['POST'])
+def api_set_colloquial_settings():
+    """Update colloquial normalization settings."""
+    try:
+        data = request.get_json() or {}
+        enabled = data.get('enabled')
+        provider = data.get('provider')
+
+        colloquial_normalizer.update_settings(enabled=enabled, provider=provider)
+
+        return jsonify({
+            "success": True,
+            "settings": colloquial_normalizer.get_settings()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/normalize-text', methods=['POST'])
+def api_normalize_text():
+    """Normalize a single text to colloquial spoken form (preview)."""
+    try:
+        data = request.get_json()
+
+        if not data or 'text' not in data:
+            return jsonify({"error": "text field is required"}), 400
+
+        text = data['text'].strip()
+        if not text:
+            return jsonify({"error": "text cannot be empty"}), 400
+
+        result = colloquial_normalizer.normalize_to_spoken(text)
+
+        return jsonify({
+            "success": True,
+            **result
+        })
+
+    except Exception as e:
+        print(f"❌ Normalization error: {e}")
+        return jsonify({"error": f"Normalization failed: {str(e)}"}), 500
+
+
 @app.route('/api/folders', methods=['GET'])
 def api_get_folders():
     """Get list of word folders with file counts."""
@@ -614,13 +1082,6 @@ def api_get_folders():
                             "name": name,
                             "file_count": len(wav_files)
                         })
-                    else:
-                        # Auto-cleanup: remove empty folders
-                        try:
-                            shutil.rmtree(path)
-                            print(f"🧹 Cleaned up empty folder: {name}")
-                        except Exception:
-                            pass
         return jsonify({
             "success": True,
             "folders": folders
@@ -726,24 +1187,20 @@ def api_bulk_delete_folders():
 
 @app.route('/api/folders/<folder_name>/download', methods=['GET'])
 def api_download_folder(folder_name: str):
-    """Download a specific folder as a ZIP file with sequential filenames and metadata."""
+    """Download a specific folder as a ZIP file with clip_NNNN naming, wavs/ subfolder, and params.json."""
     try:
         # Get all generated items for this word to ensure we have sentences
         items = get_training_items(word=folder_name, status='generated')
         
         if not items:
-             # Fallback to file system if DB has no entries (legacy compatibility)
             folder_path = os.path.join(TRAINING_OUTPUT_DIR, folder_name)
             if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
                  return jsonify({"error": "Folder not found"}), 404
-            
-            # If we rely on FS, we might miss sentences if not encoded in filename or external DB
-            # But primarily we should rely on DB. 
-            # If DB is empty but files exist, we just zip files as is? 
-            # User wants 1,2,3.. and context|filename.
-            # If not in DB, we can't get context/sentence easily.
-            # Let's assume DB is source of truth for metadata.
             return jsonify({"error": "No database entries found for this folder"}), 404
+
+        # Get current TTS model info for params.json
+        model_key = get_tts_model()
+        model_def = google_tts_service.TTS_MODELS.get(model_key, google_tts_service.TTS_MODELS[google_tts_service.DEFAULT_MODEL])
 
         # Create ZIP in memory
         zip_buffer = io.BytesIO()
@@ -754,22 +1211,35 @@ def api_download_folder(folder_name: str):
             for index, item in enumerate(items, 1):
                 wav_path = item.get('wav_path')
                 original_sentence = item.get('sentence', '').strip()
+                spoken_sentence = item.get('spoken_text') or original_sentence
                 
                 if wav_path and os.path.exists(wav_path):
-                    # New sequential filename
-                    new_filename = f"{index}.wav"
+                    clip_name = f"clip_{index:04d}"
                     
-                    # Add file to ZIP with new name
-                    zip_file.write(wav_path, new_filename)
+                    # Add WAV file inside wavs/ subfolder
+                    zip_file.write(wav_path, f"wavs/{clip_name}.wav")
                     
-                    # Add to metadata (FilenameWithoutExtension|Text|Text)
-                    filename_no_ext = str(index)
-                    metadata_lines.append(f"{filename_no_ext}|{original_sentence}|{original_sentence}")
+                    # Add to metadata (clip_NNNN|raw_text|spoken_text)
+                    metadata_lines.append(f"{clip_name}|{original_sentence}|{spoken_sentence}")
+                    
+                    # Generate per-clip params.json
+                    voice_name = item.get('voice', model_def.get('default_voice', ''))
+                    params_data = {
+                        "model": model_def.get('model_name', model_key),
+                        "voice_name": voice_name,
+                        "language": "Turkish (Turkey)",
+                        "audio_encoding": "LINEAR16",
+                        "sample_rate": 22050,
+                        "speed": 1.0,
+                        "volume_gain": 0.0,
+                        "dataset_audio_path": f"wavs/{clip_name}.wav"
+                    }
+                    zip_file.writestr(f"{clip_name}.params.json", json.dumps(params_data, indent=2, ensure_ascii=False))
 
-            # Add metadata.csv to ZIP
+            # Add metadata.csv to ZIP (UTF-8 with BOM for Windows compatibility)
             if metadata_lines:
                 metadata_content = "\n".join(metadata_lines)
-                zip_file.writestr("metadata.csv", metadata_content)
+                zip_file.writestr("metadata.csv", ("\ufeff" + metadata_content).encode("utf-8"))
         
         zip_buffer.seek(0)
         
@@ -790,13 +1260,17 @@ def api_download_folder(folder_name: str):
 
 @app.route('/api/folders/download', methods=['POST'])
 def api_download_folders():
-    """Download selected folders as a single ZIP file with sequential filenames and metadata."""
+    """Download selected folders as a single ZIP file with clip_NNNN naming, wavs/ subfolder, and params.json."""
     try:
         data = request.get_json() or {}
         folder_names = data.get('folders', [])
         
         if not folder_names:
             return jsonify({"error": "No folders selected"}), 400
+        
+        # Get current TTS model info for params.json
+        model_key = get_tts_model()
+        model_def = google_tts_service.TTS_MODELS.get(model_key, google_tts_service.TTS_MODELS[google_tts_service.DEFAULT_MODEL])
         
         # Create ZIP in memory
         zip_buffer = io.BytesIO()
@@ -813,24 +1287,37 @@ def api_download_folders():
                 for item in items:
                     wav_path = item.get('wav_path')
                     original_sentence = item.get('sentence', '').strip()
+                    spoken_sentence = item.get('spoken_text') or original_sentence
                     
                     if wav_path and os.path.exists(wav_path):
-                        # Sequential filename
-                        new_filename = f"{global_counter}.wav"
+                        clip_name = f"clip_{global_counter:04d}"
                         
-                        # Add file to ZIP with new name
-                        zip_file.write(wav_path, new_filename)
+                        # Add WAV file inside wavs/ subfolder
+                        zip_file.write(wav_path, f"wavs/{clip_name}.wav")
                         
-                        # Add to metadata (FilenameWithoutExtension|Text|Text)
-                        filename_no_ext = str(global_counter)
-                        metadata_lines.append(f"{filename_no_ext}|{original_sentence}|{original_sentence}")
+                        # Add to metadata (clip_NNNN|raw_text|spoken_text)
+                        metadata_lines.append(f"{clip_name}|{original_sentence}|{spoken_sentence}")
+                        
+                        # Generate per-clip params.json
+                        voice_name = item.get('voice', model_def.get('default_voice', ''))
+                        params_data = {
+                            "model": model_def.get('model_name', model_key),
+                            "voice_name": voice_name,
+                            "language": "Turkish (Turkey)",
+                            "audio_encoding": "LINEAR16",
+                            "sample_rate": 22050,
+                            "speed": 1.0,
+                            "volume_gain": 0.0,
+                            "dataset_audio_path": f"wavs/{clip_name}.wav"
+                        }
+                        zip_file.writestr(f"{clip_name}.params.json", json.dumps(params_data, indent=2, ensure_ascii=False))
                         
                         global_counter += 1
             
-            # Add metadata.csv to ZIP
+            # Add metadata.csv to ZIP (UTF-8 with BOM for Windows compatibility)
             if metadata_lines:
                 metadata_content = "\n".join(metadata_lines)
-                zip_file.writestr("metadata.csv", metadata_content)
+                zip_file.writestr("metadata.csv", ("\ufeff" + metadata_content).encode("utf-8"))
         
         zip_buffer.seek(0)
         
@@ -851,7 +1338,7 @@ def api_download_folders():
 
 @app.route('/api/export', methods=['POST'])
 def api_export():
-    """Export generated items as metadata.csv for training."""
+    """Export generated items as metadata.csv for training with clip_NNNN naming."""
     try:
         data = request.get_json() or {}
         word_filter = data.get('word')
@@ -869,19 +1356,12 @@ def api_export():
         metadata_path = os.path.join(TRAINING_OUTPUT_DIR, metadata_filename)
         
         with open(metadata_path, 'w', encoding='utf-8') as f:
-            for item in items:
-                wav_path = item['wav_path']
+            for index, item in enumerate(items, 1):
                 sentence = item['sentence']
+                clip_name = f"clip_{index:04d}"
                 
-                # Get filename without extension
-                filename = os.path.basename(wav_path)
-                if filename.lower().endswith('.wav'):
-                    filename_no_ext = filename[:-4]
-                else:
-                    filename_no_ext = filename
-                
-                # Format: FilenameNoExt|Text|Text
-                f.write(f"{filename_no_ext}|{sentence}|{sentence}\n")
+                # Format: clip_NNNN|Text|Text
+                f.write(f"{clip_name}|{sentence}|{sentence}\n")
         
         item_ids = [item['id'] for item in items]
         mark_items_exported(item_ids)

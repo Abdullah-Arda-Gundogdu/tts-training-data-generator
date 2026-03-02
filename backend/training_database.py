@@ -47,6 +47,7 @@ def init_training_db():
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     word TEXT NOT NULL,
                     sentence TEXT NOT NULL,
+                    spoken_text TEXT,
                     wav_path TEXT,
                     status TEXT DEFAULT 'pending',
                     voice TEXT DEFAULT 'tr-TR-Wavenet-D',
@@ -56,6 +57,13 @@ def init_training_db():
                     metadata TEXT
                 )
             """)
+            
+            # Migration: add spoken_text column if not exists (for existing DBs)
+            try:
+                cursor.execute("ALTER TABLE training_items ADD COLUMN spoken_text TEXT")
+                print("📝 Added spoken_text column to training_items")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
             
             # Generation batches table for tracking
             cursor.execute("""
@@ -89,18 +97,20 @@ def add_training_item(
     wav_path: Optional[str] = None,
     voice: str = "tr-TR-Wavenet-D",
     duration_seconds: Optional[float] = None,
-    status: str = "pending"
+    status: str = "pending",
+    spoken_text: Optional[str] = None
 ) -> int:
     """
     Add a new training item to the database.
     
     Args:
         word: The target word for pronunciation
-        sentence: The full sentence text
+        sentence: The full sentence text (formal/written form)
         wav_path: Path to the generated .wav file (if exists)
         voice: Google TTS voice used
         duration_seconds: Audio duration
         status: Item status (pending, generated, exported)
+        spoken_text: Colloquial spoken form of the sentence (for alignment)
     
     Returns:
         The ID of the created item
@@ -110,9 +120,9 @@ def add_training_item(
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO training_items 
-                (word, sentence, wav_path, voice, duration_seconds, status)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (word, sentence, wav_path, voice, duration_seconds, status))
+                (word, sentence, spoken_text, wav_path, voice, duration_seconds, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (word, sentence, spoken_text, wav_path, voice, duration_seconds, status))
             conn.commit()
             return cursor.lastrowid
 
@@ -134,7 +144,7 @@ def update_training_item(
     if not kwargs:
         return False
     
-    allowed_fields = {'word', 'sentence', 'wav_path', 'status', 'voice', 
+    allowed_fields = {'word', 'sentence', 'spoken_text', 'wav_path', 'status', 'voice', 
                       'duration_seconds', 'exported_at', 'metadata'}
     
     updates = {k: v for k, v in kwargs.items() if k in allowed_fields}

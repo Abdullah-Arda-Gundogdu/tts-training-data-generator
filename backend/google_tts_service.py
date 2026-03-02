@@ -9,12 +9,25 @@ Supports 4 model families:
   - Chirp 3: HD (chirp3_hd)
 """
 
+import io
 import os
+import wave
 from datetime import datetime
 from typing import List, Dict, Optional
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import texttospeech
 from dotenv import load_dotenv
+
+from audio_utils import (
+    clean_text,
+    trim_silence,
+    apply_peak_normalization,
+    apply_volume_gain,
+    apply_speed,
+    resample_pcm,
+    save_wav,
+)
 
 # Load environment variables
 load_dotenv()
@@ -256,6 +269,11 @@ def synthesize_speech(
         if voice_name is None:
             voice_name = model_def["default_voice"]
         
+        # Clean text before sending to API
+        text = clean_text(text)
+        if not text:
+            return {"success": False, "error": "Empty text after cleaning", "text": text}
+        
         # Set up synthesis input — with optional prompt for Gemini models
         input_params = {"text": text}
         if prompt and model_def["model_name"]:
@@ -275,10 +293,10 @@ def synthesize_speech(
         
         voice = texttospeech.VoiceSelectionParams(**voice_params)
         
-        # Configure audio output
+        # Configure audio output — always request LINEAR16 for post-processing
         audio_config_params = {
             "audio_encoding": texttospeech.AudioEncoding.LINEAR16,
-            "sample_rate_hertz": sample_rate,
+            "sample_rate_hertz": 24000,  # Request at 24kHz, resample later
         }
         
         # Only add SSML parameters for models that support them (Chirp3 HD)
@@ -304,16 +322,44 @@ def synthesize_speech(
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
         
-        # Write the audio file
-        with open(output_path, "wb") as out:
-            out.write(response.audio_content)
+        # ── Post-processing pipeline ──
+        # Extract raw PCM from the WAV response
+        wav_buffer = io.BytesIO(response.audio_content)
+        with wave.open(wav_buffer, 'rb') as wf:
+            api_sample_rate = wf.getframerate()
+            pcm_data = wf.readframes(wf.getnframes())
         
-        # Calculate approximate duration (rough estimate)
+        # 1. Skip silence trimming — can cut off final syllables
+        #    A bit of silence at edges is fine for XTTS training
+        pcm_processed = pcm_data
+
+        # 1b. Add 200ms silence padding at the end to prevent cut-off
+        import numpy as np
+        end_pad = np.zeros(int(api_sample_rate * 0.2), dtype=np.int16)
+        pcm_processed = pcm_processed + end_pad.tobytes()
+        
+        # 2. Volume gain (only for non-SSML models; SSML models handle it server-side)
+        if not model_def["supports_ssml_params"]:
+            pcm_processed = apply_volume_gain(pcm_processed, volume_gain_db)
+        
+        # 3. Speed adjustment (only for non-SSML models)
+        if not model_def["supports_ssml_params"]:
+            pcm_processed = apply_speed(pcm_processed, api_sample_rate, speaking_rate)
+        
+        # 4. Resample to target rate (e.g. 24kHz → 22050Hz for XTTS)
+        pcm_processed = resample_pcm(pcm_processed, api_sample_rate, sample_rate)
+        
+        # 5. Peak-normalize to −1 dB for consistent loudness
+        pcm_processed = apply_peak_normalization(pcm_processed, target_peak_db=-1.0)
+        
+        # 6. Save final WAV
+        save_wav(output_path, pcm_processed, sample_rate=sample_rate)
+        
+        # Calculate duration from processed PCM (accurate — no header in byte count)
+        duration_seconds = len(pcm_processed) / (sample_rate * 2)  # 16-bit = 2 bytes
         file_size = os.path.getsize(output_path)
-        # For LINEAR16: bytes per second = sample_rate * 2 (16-bit = 2 bytes)
-        duration_seconds = file_size / (sample_rate * 2)
         
-        print(f"✅ [{model_label}] Audio saved: {output_path} ({duration_seconds:.1f}s)")
+        print(f"✅ [{model_label}] Audio saved: {output_path} ({duration_seconds:.1f}s, {sample_rate}Hz)")
         
         return {
             "success": True,
@@ -322,7 +368,8 @@ def synthesize_speech(
             "voice": voice_name,
             "model": model_key,
             "duration_seconds": round(duration_seconds, 2),
-            "file_size_bytes": file_size
+            "file_size_bytes": file_size,
+            "sample_rate": sample_rate,
         }
         
     except Exception as e:
@@ -341,7 +388,7 @@ def batch_synthesize(
     model_key: str = None
 ) -> List[Dict]:
     """
-    Generate .wav files for multiple sentences.
+    Generate .wav files for multiple sentences (parallel).
     
     Args:
         items: List of dicts with 'text' and optionally 'word' keys
@@ -353,32 +400,44 @@ def batch_synthesize(
         List of result dicts with file paths and status
     """
     os.makedirs(output_dir, exist_ok=True)
-    
-    results = []
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    for i, item in enumerate(items):
+    def _synth_one(i, item):
         text = item.get("text", "")
         if not text:
-            results.append({"success": False, "error": "Empty text", "index": i})
-            continue
+            return {"success": False, "error": "Empty text", "index": i}
         
-        # Generate filename
         text_part = sanitize_filename(text)
         filename = f"train_{timestamp}_{i:03d}_{text_part}.wav"
         output_path = os.path.join(output_dir, filename)
         
-        # Synthesize
         result = synthesize_speech(
             text=text,
             output_path=output_path,
             voice_name=voice_name,
             model_key=model_key
         )
-        
         result["index"] = i
         result["word"] = item.get("word", "")
-        results.append(result)
+        return result
+    
+    # Process in parallel (max 5 concurrent API calls)
+    results = [None] * len(items)
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_idx = {
+            executor.submit(_synth_one, i, item): i
+            for i, item in enumerate(items)
+        }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                results[idx] = future.result()
+            except Exception as exc:
+                results[idx] = {
+                    "success": False,
+                    "error": str(exc),
+                    "index": idx
+                }
     
     # Summary
     successful = sum(1 for r in results if r.get("success"))

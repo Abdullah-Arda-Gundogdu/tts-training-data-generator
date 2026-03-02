@@ -19,6 +19,11 @@
   --radius-sm: 8px;
 }
 
+html,
+body {
+  overflow-x: hidden;
+}
+
 /* Clean icon styling */
 .icon {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -101,38 +106,75 @@ body {
   border: 1px solid var(--border);
 }
 
-/* Notifications */
-.notification {
+/* Toast Notifications — macOS style, top-right overlay */
+.toast-container {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 9999;
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 1rem;
-  border-radius: var(--radius);
-  margin-bottom: 1.5rem;
-  animation: slideIn 0.3s ease;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: none;
+  max-width: 420px;
 }
 
-.notification.error {
-  background: rgba(239, 68, 68, 0.15);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  pointer-events: auto;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  animation: toastSlideIn 0.3s ease;
+}
+
+.toast span {
+  flex: 1;
+  line-height: 1.3;
+}
+
+.toast-error {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.35);
   color: #fca5a5;
 }
 
-.notification.success {
-  background: rgba(16, 185, 129, 0.15);
-  border: 1px solid rgba(16, 185, 129, 0.3);
+.toast-success {
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid rgba(16, 185, 129, 0.35);
   color: #6ee7b7;
 }
 
-@keyframes slideIn {
+.toast-close {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.5;
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 0 2px;
+  line-height: 1;
+  transition: opacity 0.15s;
+}
+
+.toast-close:hover {
+  opacity: 1;
+}
+
+@keyframes toastSlideIn {
   from {
     opacity: 0;
-    transform: translateY(-10px);
+    transform: translateX(40px);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(0);
   }
 }
 
@@ -237,6 +279,11 @@ body {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 1.25rem;
   width: 100%;
+  overflow: hidden;
+}
+
+.phases-grid>* {
+  min-width: 0;
 }
 
 /* Help Bar */
@@ -2593,4 +2640,197 @@ body {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ============================================================================
+   BATCH ICON BUTTONS (in Phase 1 header)
+   ============================================================================ */
+
+.batch-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.batch-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text);
+}
+
+.batch-icon-btn.active {
+  background: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.5);
+  color: var(--primary-light);
+}
+
+/* ============================================================================
+   BATCH SLIDE-OUT OVERLAY
+   ============================================================================ */
+
+.batch-slideout-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.batch-slideout-panel {
+  background: rgb(30, 30, 40);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+  animation: slideUp 0.2s ease;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.batch-slideout-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.batch-slideout-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.batch-slideout-close:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+.batch-slideout-content {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* ============================================================================
+   EXPANDABLE FOLDER LIST
+   ============================================================================ */
+
+.folder-list-container {
+  max-height: 500px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.folder-list-item {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.folder-list-item:last-child {
+  border-bottom: none;
+}
+
+.folder-list-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1rem;
+  transition: background 0.15s;
+}
+
+.folder-list-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.folder-list-item.expanded>.folder-list-row {
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.folder-list-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+.folder-expand-icon {
+  color: var(--text-dim);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.folder-expand-icon.rotated {
+  transform: rotate(90deg);
+}
+
+.folder-expanded-content {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.15);
+  padding: 0.5rem;
+}
+
+.folder-expanded-content .audio-list {
+  max-height: 300px;
+  gap: 0.35rem;
+}
+
+.folder-expanded-content .audio-item {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.folder-expanded-content .btn-play {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
 }
